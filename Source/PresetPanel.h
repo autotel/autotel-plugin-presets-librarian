@@ -51,8 +51,9 @@ struct PresetPanelColours
     edits the filename with the extension shown beside it, dimmed; editing it disables Save and
     leaves Save As, because Save means "write back to the file this document came from"; and Save As
     writes straight into the preset folder rather than opening a file chooser, since the folder is
-    this panel's own setting and the name is the field above the button. The annotation a filename
-    cannot carry goes in the comment field, which is shown in the list and is never part of a name.
+    this panel's own setting and the name is the field above the button -- which is why its label
+    carries no ellipsis. The annotation a filename cannot carry goes in the comment field, which is
+    shown in the list and is never part of a name.
 
     Selecting a row loads it immediately -- the librarian is for browsing sounds, and a click that
     only highlights is a click wasted. Nothing is destructive until Save, Rename or Delete. */
@@ -159,7 +160,7 @@ private:
     juce::Label dateLabel;
 
     juce::TextButton saveButton { "save" };
-    juce::TextButton saveAsButton { "save as..." };
+    juce::TextButton saveAsButton { "save as" };
     juce::TextButton renameButton { "rename / apply" };
     juce::TextButton deleteButton { "delete" };
 
