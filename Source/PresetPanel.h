@@ -30,6 +30,13 @@ struct PresetHost
         file the live document came from. A plugin that shows the patch name elsewhere updates it
         here. */
     virtual void documentSaved (const juce::File& file, const PresetMetadata& meta) { juce::ignoreUnused (file, meta); }
+
+    /** The document now lives in `file` under this metadata -- after a plain Load. Together with
+        `documentSaved()` above, this covers every path by which the live document's on-disk
+        identity can change; a plugin that shows the patch name elsewhere updates it here too, not
+        just in `documentSaved()`, since selecting a row loads it immediately and never calls
+        that. */
+    virtual void documentLoaded (const juce::File& file, const PresetMetadata& meta) { juce::ignoreUnused (file, meta); }
 };
 
 /** Colours the panel draws with. Defaults are a dark neutral set; a plugin with its own theme

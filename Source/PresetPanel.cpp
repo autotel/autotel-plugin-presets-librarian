@@ -304,6 +304,7 @@ void PresetPanel::loadEntry (const PresetEntry& entry)
 
     host.applyDocument (loaded->tree);
     currentFile = entry.file;
+    host.documentLoaded (entry.file, loaded->meta);
 
     statusLabel.setText ("loaded \"" + entry.file.getFileNameWithoutExtension() + "\"",
                          juce::dontSendNotification);

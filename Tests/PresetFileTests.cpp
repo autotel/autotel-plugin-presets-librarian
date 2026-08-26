@@ -1,4 +1,5 @@
 #include "PresetLibrary.h"
+#include "PresetPanel.h"
 #include <juce_core/juce_core.h>
 
 using namespace atl;
@@ -293,4 +294,78 @@ struct PresetFileTests : juce::UnitTest
 };
 
 static PresetFileTests presetFileTests;
+
+/** A minimal PresetHost recording which of documentLoaded()/documentSaved() fired and with what,
+    so a plugin's "show the name outside the panel" logic has something to assert against. */
+struct RecordingHost : PresetHost
+{
+    juce::ValueTree document { "Doc" };
+
+    juce::ValueTree captureDocument() override { return document; }
+    void applyDocument (const juce::ValueTree& t) override { document = t; }
+    juce::File presetFolder() const override { return folder; }
+    void setPresetFolder (const juce::File& f) override { folder = f; }
+
+    void documentSaved (const juce::File& f, const PresetMetadata& m) override
+    {
+        savedCount++; lastFile = f; lastMeta = m;
+    }
+    void documentLoaded (const juce::File& f, const PresetMetadata& m) override
+    {
+        loadedCount++; lastFile = f; lastMeta = m;
+    }
+
+    juce::File folder;
+    int savedCount = 0, loadedCount = 0;
+    juce::File lastFile;
+    PresetMetadata lastMeta;
+};
+
+/** Drives a real PresetPanel the way a click on its list would -- selectRow() on the ListBox
+    calls its model's selectedRowsChanged() synchronously (see juce_ListBox.cpp), which is
+    PresetPanel's own load path (ListModel::selectedRowsChanged -> selectionChanged ->
+    loadEntry()). `list`/`loadEntry()` are private, so this walks the panel's real child
+    components for the one juce::ListBox it owns rather than adding a test-only accessor. */
+struct PresetPanelHookTests : juce::UnitTest
+{
+    PresetPanelHookTests() : juce::UnitTest ("atl::PresetPanel", "presets") {}
+
+    void runTest() override
+    {
+        const auto format = testFormat();
+        auto tempDir = juce::File::createTempFile ("atl-presetpanel-tests");
+        tempDir.deleteFile();
+        tempDir.createDirectory();
+
+        PresetFile::save (tempDir.getChildFile ("kit" + format.extension), makeDocument(),
+                          makeMeta(), format);
+
+        RecordingHost host;
+        host.folder = tempDir;
+
+        PresetPanel panel (host, format);
+        panel.setSize (400, 300);
+
+        juce::ListBox* list = nullptr;
+        for (int i = 0; i < panel.getNumChildComponents() && list == nullptr; ++i)
+            list = dynamic_cast<juce::ListBox*> (panel.getChildComponent (i));
+
+        beginTest ("selecting a row fires documentLoaded, not documentSaved");
+        {
+            expect (list != nullptr, "PresetPanel must own exactly one juce::ListBox");
+            if (list == nullptr) return;
+
+            list->selectRow (0);
+
+            expectEquals (host.loadedCount, 1);
+            expectEquals (host.savedCount, 0);
+            expectEquals (host.lastFile.getFileNameWithoutExtension(), juce::String ("kit"));
+            expectEquals (host.lastMeta.name, juce::String ("kit"));
+        }
+
+        tempDir.deleteRecursively();
+    }
+};
+
+static PresetPanelHookTests presetPanelHookTests;
 } // namespace
