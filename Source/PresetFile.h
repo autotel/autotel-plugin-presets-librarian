@@ -39,7 +39,16 @@ struct PresetMetadata
     juce::StringArray tags;
     juce::String      date;   // ISO-8601, stamped at save time
 
-    /** Only what has no home in the document tree: description, comment, tags, date. */
+    /** Whatever else a plugin wants listed without loading the document: a duration, a
+        one-shot/looped flag, a thumbnail. Stored inside `<PresetMeta>` and round-tripped
+        untouched -- the librarian never reads a property of it, so a plugin can put anything here
+        and still be listed by a build that knows nothing about it.
+
+        Scanned along with the rest, which is the point: it is for the columns of a list, not for
+        the document. Anything the plugin needs only after loading belongs in the document tree. */
+    juce::ValueTree extra;
+
+    /** Only what has no home in the document tree: description, comment, tags, date, extra. */
     juce::ValueTree toValueTree() const;
     static PresetMetadata fromValueTree (const juce::ValueTree& presetMetaTree,
                                          const juce::String& nameFromFile,
@@ -75,6 +84,17 @@ namespace PresetFile
     /** Enough to list a folder without materialising the document. Still parses the tree once (the
         binary format has no skip-children shortcut), but skips whatever the plugin does with it. */
     std::optional<PresetMetadata> scanMetadataOnly (const juce::File& file, const PresetFormat& format);
+
+    /** The same as `load`, for a preset the plugin ships inside its own binary rather than on
+        disk. There is no filename to take the name from, so `name` is passed in -- the resource's
+        name, which is the built-in equivalent of a file's. `data` is read, never retained. */
+    std::optional<Loaded> loadFromData (const void* data, int sizeInBytes, const juce::String& name,
+                                        const PresetFormat& format);
+
+    /** `scanMetadataOnly` for a built-in. See `loadFromData`. */
+    std::optional<PresetMetadata> scanMetadataOnlyFromData (const void* data, int sizeInBytes,
+                                                            const juce::String& name,
+                                                            const PresetFormat& format);
 
     /** A `Presets` subfolder of wherever the plugin keeps its global settings. */
     juce::File defaultPresetFolder (const juce::File& settingsDir);

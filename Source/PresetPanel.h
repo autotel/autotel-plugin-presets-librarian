@@ -21,6 +21,11 @@ struct PresetHost
         follows -- push to its engine, tell its UI -- before returning. */
     virtual void applyDocument (const juce::ValueTree&) = 0;
 
+    /** What the plugin wants listed about the live document without loading it -- see
+        `PresetMetadata::extra`. Asked for at save time only; the default is nothing, which is the
+        right answer for a plugin whose presets need no extra columns. */
+    virtual juce::ValueTree captureExtraMetadata() { return {}; }
+
     /** Where presets are saved and listed. Never empty: a plugin with no folder configured should
         answer with its own default (see `PresetFile::defaultPresetFolder`). */
     virtual juce::File presetFolder() const = 0;
@@ -31,12 +36,55 @@ struct PresetHost
         here. */
     virtual void documentSaved (const juce::File& file, const PresetMetadata& meta) { juce::ignoreUnused (file, meta); }
 
+    /** Throw the live document away and start from a blank one -- what the panel's New does.
+
+        The default hands `applyDocument` an invalid tree, which is the right answer for a plugin
+        whose loader already falls back to its defaults when handed something that is not one of
+        its documents. Override it when starting fresh means more than that. */
+    virtual void newDocument() { applyDocument ({}); }
+
     /** The document now lives in `file` under this metadata -- after a plain Load. Together with
         `documentSaved()` above, this covers every path by which the live document's on-disk
         identity can change; a plugin that shows the patch name elsewhere updates it here too, not
         just in `documentSaved()`, since selecting a row loads it immediately and never calls
         that. */
     virtual void documentLoaded (const juce::File& file, const PresetMetadata& meta) { juce::ignoreUnused (file, meta); }
+};
+
+/** Optional: a plugin that can preview a preset without loading it implements this and hands it to
+    the panel, which then shows an audition button and drives it from the selected row.
+
+    The librarian has no idea this is audio -- it asks whether a row can be previewed and says when
+    to start and stop. Everything about *what* is previewed, and where the data for it comes from,
+    stays in the plugin. */
+struct PresetAuditioner
+{
+    virtual ~PresetAuditioner() = default;
+
+    /** Whether this row has anything to preview -- drives the button's enablement. */
+    virtual bool canAudition (const PresetEntry&) = 0;
+    virtual void startAudition (const PresetEntry&) = 0;
+    virtual void stopAudition() = 0;
+};
+
+/** Optional plugin-supplied pieces of the panel. All of them may be left unset, which is the plain
+    librarian; a plugin that wants a waveform above the details, or a filter only it understands,
+    fills in what it needs rather than the panel growing a field per plugin.
+
+    Components are borrowed, never owned: they must outlive the panel. */
+struct PresetPanelExtras
+{
+    /** Sits at the top of the details column, above the name field. */
+    juce::Component* detailsHeader = nullptr;
+    int detailsHeaderHeight = 0;
+
+    /** Sits under the search row, above the list. */
+    juce::Component* extraFilters = nullptr;
+    int extraFiltersHeight = 0;
+
+    /** Applied after the panel's own text/tag/built-in filtering. Call `refilter()` when whatever
+        it reads has changed. */
+    std::function<bool (const PresetEntry&)> extraFilterPredicate;
 };
 
 /** Colours the panel draws with. Defaults are a dark neutral set; a plugin with its own theme
@@ -75,7 +123,29 @@ public:
         after anything this panel writes. */
     void refresh();
 
+    /** Re-reads the folder. For a plugin that writes presets from somewhere other than this panel
+        -- a Save button of its own, an autosave -- so the list catches up. */
+    void rescan();
+
+    /** The presets the plugin ships inside its binary. See `PresetLibrary::setBuiltIns`. */
+    void setBuiltIns (std::vector<BuiltInPreset>);
+
+    /** The selected row, or null when the selection was cleared. For a plugin that shows something
+        of its own about the selection -- a waveform, a thumbnail -- in `PresetPanelExtras`. */
+    std::function<void (const PresetEntry*)> onSelectionChanged;
+
     void setColours (PresetPanelColours);
+
+    /** Plugin-supplied pieces -- see `PresetPanelExtras`. Call before the panel is shown. */
+    void setExtras (PresetPanelExtras);
+
+    /** Turns on the audition button and drives it from the selected row. Null switches it off.
+        Not owned. */
+    void setAuditioner (PresetAuditioner*);
+
+    /** Re-applies the filter, including the plugin's own predicate. For a plugin whose extra filter
+        controls have just changed; `refresh()` does this too, along with the folder label. */
+    void refilter();
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -106,6 +176,12 @@ private:
     void loadEntry (const PresetEntry&);
     PresetMetadata metadataFromEditors() const;
 
+    /** Whether the selected row is one this panel is allowed to write to. */
+    bool selectionIsWritable() const;
+    void toggleAudition();
+    void stopAuditionIfRunning();
+
+    void doNew();
     void doSave();
     void doSaveAs();
     /** Writes the live document to `file`, adopts it as the open one and refreshes. */
@@ -127,6 +203,8 @@ private:
     PresetFormat format;
     PresetLibrary library;
     PresetPanelColours colours;
+    PresetPanelExtras extras;
+    PresetAuditioner* auditioner = nullptr;
 
     PresetFilter filter;
     std::vector<const PresetEntry*> rows;
@@ -139,10 +217,17 @@ private:
         a "current preset file" for a purely UI need. */
     juce::File currentFile;
 
+    /** `PresetEntry::key()` of the open preset. Tracked beside `currentFile` because a built-in has
+        no file, so an empty `currentFile` cannot tell "nothing open" from "a built-in is open". */
+    juce::String currentKey;
+
     // ── list column ──────────────────────────────────────────────────────────
     juce::TextEditor searchBox;
     juce::ComboBox tagFilterBox;
     juce::TextButton refreshButton { "refresh" };
+    /** Only shown when the plugin actually ships built-ins. */
+    juce::ToggleButton builtInToggle { "built-in" };
+    juce::ToggleButton userToggle { "mine" };
     juce::ListBox list { "presets", nullptr };
     ListModel listModel { *this };
     juce::Label statusLabel;
@@ -166,6 +251,8 @@ private:
     juce::TextEditor tagsEditor;
     juce::Label dateLabel;
 
+    juce::TextButton auditionButton { "audition" };
+    juce::TextButton newButton { "new" };
     juce::TextButton saveButton { "save" };
     juce::TextButton saveAsButton { "save as" };
     juce::TextButton renameButton { "rename / apply" };

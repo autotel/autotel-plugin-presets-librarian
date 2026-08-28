@@ -20,16 +20,23 @@ void PresetPanel::ListModel::paintListBoxItem (int row, juce::Graphics& g, int w
         g.fillRect (0, 0, width, height);
     }
 
-    const bool isOpen = (e.file == owner.currentFile);
-    g.setColour (isOpen ? c.accent : c.text);
+    // By key, not by file: a built-in has no file, so comparing files would mark every built-in
+    // as the open one whenever nothing is open.
+    const bool isOpen = ! owner.currentKey.isEmpty() && e.key() == owner.currentKey;
+    g.setColour (isOpen ? c.accent : (e.isBuiltIn ? c.text.withAlpha (0.75f) : c.text));
     g.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+
+    juce::String title;
+    if (isOpen) title += juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xb8 "));
+    // A padlock, because a built-in row offers everything except writing to it.
+    if (e.isBuiltIn) title += juce::String (juce::CharPointer_UTF8 ("\xf0\x9f\x94\x92 "));
     // The filename is the name (see PresetMetadata), so it is what the row says.
-    g.drawText ((isOpen ? juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xb8 ")) : juce::String())
-                    + e.file.getFileNameWithoutExtension(),
-                8, 1, width - 12, height / 2, juce::Justification::centredLeft, true);
+    title += e.isBuiltIn ? e.meta.name : e.file.getFileNameWithoutExtension();
+    g.drawText (title, 8, 1, width - 12, height / 2, juce::Justification::centredLeft, true);
 
     juce::StringArray subParts;
-    // First, because it is the note the user left themselves about *this* file.
+    if (e.category.isNotEmpty()) subParts.add (e.category);
+    // First of the user's own, because it is the note they left themselves about *this* file.
     if (e.meta.comment.isNotEmpty()) subParts.add (e.meta.comment);
     if (e.meta.author.isNotEmpty()) subParts.add (e.meta.author);
     if (! e.meta.tags.isEmpty()) subParts.add (e.meta.tags.joinIntoString (", "));
@@ -68,6 +75,18 @@ PresetPanel::PresetPanel (PresetHost& h, PresetFormat f)
     refreshButton.onClick = [this] { rescanAndRefreshList(); };
     addAndMakeVisible (refreshButton);
 
+    builtInToggle.setToggleState (true, juce::dontSendNotification);
+    userToggle.setToggleState (true, juce::dontSendNotification);
+    for (auto* t : { &builtInToggle, &userToggle })
+    {
+        t->onClick = [this] { applyFilterAndRefreshList(); };
+        // Made visible only once a scan has found built-ins -- see applyFilterAndRefreshList.
+        addChildComponent (*t);
+    }
+
+    auditionButton.onClick = [this] { toggleAudition(); };
+    addChildComponent (auditionButton);   // shown by setAuditioner
+
     list.setModel (&listModel);
     list.setRowHeight (30);
     addAndMakeVisible (list);
@@ -100,6 +119,10 @@ PresetPanel::PresetPanel (PresetHost& h, PresetFormat f)
     descriptionEditor.setMultiLine (true, true);
     descriptionEditor.setReturnKeyStartsNewLine (true);
 
+    newButton.setTooltip ("start from an empty preset: the live document is cleared and no file "
+                          "is open, so Save As is how it gets a name");
+    newButton.onClick = [this] { doNew(); };
+    addAndMakeVisible (newButton);
     saveButton.onClick = [this] { doSave(); };
     addAndMakeVisible (saveButton);
     saveAsButton.onClick = [this] { doSaveAs(); };
@@ -116,7 +139,72 @@ PresetPanel::PresetPanel (PresetHost& h, PresetFormat f)
     refreshFolderLabel();
 }
 
-PresetPanel::~PresetPanel() = default;
+PresetPanel::~PresetPanel()
+{
+    stopAuditionIfRunning();
+}
+
+void PresetPanel::setExtras (PresetPanelExtras e)
+{
+    if (extras.detailsHeader != nullptr) removeChildComponent (extras.detailsHeader);
+    if (extras.extraFilters != nullptr)  removeChildComponent (extras.extraFilters);
+
+    extras = std::move (e);
+
+    if (extras.detailsHeader != nullptr) addAndMakeVisible (*extras.detailsHeader);
+    if (extras.extraFilters != nullptr)  addAndMakeVisible (*extras.extraFilters);
+
+    resized();
+    applyFilterAndRefreshList();
+}
+
+void PresetPanel::setAuditioner (PresetAuditioner* a)
+{
+    if (auditioner != nullptr && auditioner != a)
+        auditioner->stopAudition();
+
+    auditioner = a;
+    auditionButton.setVisible (auditioner != nullptr);
+    updateEnablement();
+    resized();
+}
+
+void PresetPanel::refilter()
+{
+    applyFilterAndRefreshList();
+}
+
+void PresetPanel::rescan()
+{
+    rescanAndRefreshList();
+}
+
+void PresetPanel::setBuiltIns (std::vector<BuiltInPreset> builtIns)
+{
+    library.setBuiltIns (std::move (builtIns));
+    rescanAndRefreshList();
+}
+
+void PresetPanel::stopAuditionIfRunning()
+{
+    if (auditioner != nullptr)
+        auditioner->stopAudition();
+}
+
+void PresetPanel::toggleAudition()
+{
+    if (auditioner == nullptr || ! haveSelection) return;
+    // One button for both: the plugin owns the "is it playing" state, and asking it to stop
+    // something already stopped is defined to be harmless.
+    auditioner->stopAudition();
+    if (auditioner->canAudition (selectedCopy))
+        auditioner->startAudition (selectedCopy);
+}
+
+bool PresetPanel::selectionIsWritable() const
+{
+    return haveSelection && ! selectedCopy.isBuiltIn;
+}
 
 void PresetPanel::setColours (PresetPanelColours c)
 {
@@ -141,6 +229,13 @@ void PresetPanel::applyColours()
     {
         l->setColour (juce::Label::textColourId, colours.textDim);
         if (l != &statusLabel && l != &folderLabel) l->setFont (juce::FontOptions (10.5f));
+    }
+
+    for (auto* t : { &builtInToggle, &userToggle })
+    {
+        t->setColour (juce::ToggleButton::textColourId, colours.textDim);
+        t->setColour (juce::ToggleButton::tickColourId, colours.accent);
+        t->setColour (juce::ToggleButton::tickDisabledColourId, colours.outline);
     }
 
     searchBox.setTextToShowWhenEmpty ("filter...", colours.textDim);
@@ -196,6 +291,19 @@ void PresetPanel::applyFilterAndRefreshList()
     if (tagFilterBox.getText().isNotEmpty() && tagFilterBox.getText() != "any tag")
         filter.requiredTags.add (tagFilterBox.getText());
 
+    // The two source toggles only earn their space in a plugin that ships built-ins.
+    bool anyBuiltIn = false;
+    for (const auto& e : library.getAll())
+        if (e.isBuiltIn) { anyBuiltIn = true; break; }
+    const bool togglesWereVisible = builtInToggle.isVisible();
+    builtInToggle.setVisible (anyBuiltIn);
+    userToggle.setVisible (anyBuiltIn);
+    if (togglesWereVisible != anyBuiltIn) resized();
+
+    filter.includeBuiltIn = ! anyBuiltIn || builtInToggle.getToggleState();
+    filter.includeUser    = ! anyBuiltIn || userToggle.getToggleState();
+    filter.extraPredicate = extras.extraFilterPredicate;
+
     const auto previousKey = haveSelection ? selectedCopy.key() : juce::String();
 
     rows = library.getFiltered (filter);
@@ -207,10 +315,10 @@ void PresetPanel::applyFilterAndRefreshList()
         for (size_t i = 0; i < rows.size(); ++i)
             if (rows[i]->key() == previousKey) { newRow = (int) i; break; }
     }
-    else if (currentFile != juce::File())
+    else if (currentKey.isNotEmpty())
     {
         for (size_t i = 0; i < rows.size(); ++i)
-            if (rows[i]->file == currentFile) { newRow = (int) i; break; }
+            if (rows[i]->key() == currentKey) { newRow = (int) i; break; }
     }
 
     list.selectRow (newRow, false, true);
@@ -226,6 +334,9 @@ void PresetPanel::applyFilterAndRefreshList()
 
 void PresetPanel::selectionChanged (int row)
 {
+    // Whatever was previewing was previewing the row being left.
+    stopAuditionIfRunning();
+
     selectedRow = row;
     haveSelection = juce::isPositiveAndBelow (row, (int) rows.size());
     if (haveSelection)
@@ -234,9 +345,12 @@ void PresetPanel::selectionChanged (int row)
     updateDetailsFromSelection();
     updateEnablement();
 
+    if (onSelectionChanged)
+        onSelectionChanged (haveSelection ? &selectedCopy : nullptr);
+
     // Selecting a row loads it, unless it is already the open one -- which is what stops a refresh
     // re-selecting the same row from reloading the document on every unrelated edit.
-    if (haveSelection && selectedCopy.file != currentFile)
+    if (haveSelection && selectedCopy.key() != currentKey)
         loadEntry (selectedCopy);
 }
 
@@ -245,8 +359,11 @@ void PresetPanel::updateDetailsFromSelection()
     if (haveSelection)
     {
         // From the file, not from the tree: they agree after a save, but only the file is right
-        // after somebody renamed it in a file manager.
-        nameEditor.setText (selectedCopy.file.getFileNameWithoutExtension(), false);
+        // after somebody renamed it in a file manager. A built-in has no file, so its resource name
+        // stands in -- and Save As is how it becomes a file of that name.
+        nameEditor.setText (selectedCopy.isBuiltIn ? selectedCopy.meta.name
+                                                   : selectedCopy.file.getFileNameWithoutExtension(),
+                            false);
         authorEditor.setText (selectedCopy.meta.author, false);
         commentEditor.setText (selectedCopy.meta.comment, false);
         descriptionEditor.setText (selectedCopy.meta.description, false);
@@ -289,25 +406,49 @@ void PresetPanel::updateEnablement()
         : (currentFile == juce::File() ? "this document has no file yet -- use Save As"
                                        : "the name field no longer names the open file -- use Save "
                                          "As to write it under the new name, or rename to move it"));
-    renameButton.setEnabled (haveSelection);
-    deleteButton.setEnabled (haveSelection);
+
+    // A built-in is readable, loadable and duplicable, but never writable.
+    const bool writable = selectionIsWritable();
+    renameButton.setEnabled (writable);
+    deleteButton.setEnabled (writable);
+    if (haveSelection && ! writable)
+    {
+        const auto why = "built-in -- duplicate it to get an editable copy";
+        renameButton.setTooltip (why);
+        deleteButton.setTooltip (why);
+    }
+    else
+    {
+        renameButton.setTooltip ({});
+        deleteButton.setTooltip ({});
+    }
+
+    auditionButton.setEnabled (auditioner != nullptr && haveSelection
+                               && auditioner->canAudition (selectedCopy));
 }
 
 void PresetPanel::loadEntry (const PresetEntry& entry)
 {
-    auto loaded = PresetFile::load (entry.file, format);
+    const auto label = entry.isBuiltIn ? entry.meta.name : entry.file.getFileNameWithoutExtension();
+
+    auto loaded = entry.isBuiltIn
+        ? PresetFile::loadFromData (entry.data, entry.dataSize, entry.meta.name, format)
+        : PresetFile::load (entry.file, format);
+
     if (! loaded.has_value())
     {
-        showError ("Could not load \"" + entry.file.getFileName() + "\" -- it may be corrupt.");
+        showError ("Could not load \"" + label + "\" -- it may be corrupt.");
         return;
     }
 
     host.applyDocument (loaded->tree);
+    // A built-in has no file to write back to, so the open document has no on-disk identity and
+    // Save falls through to Save As -- which is exactly what editing a built-in should do.
     currentFile = entry.file;
+    currentKey = entry.key();
     host.documentLoaded (entry.file, loaded->meta);
 
-    statusLabel.setText ("loaded \"" + entry.file.getFileNameWithoutExtension() + "\"",
-                         juce::dontSendNotification);
+    statusLabel.setText ("loaded \"" + label + "\"", juce::dontSendNotification);
     updateEnablement();   // the open file changed, and with it what Save means
 }
 
@@ -323,12 +464,17 @@ PresetMetadata PresetPanel::metadataFromEditors() const
     m.tags.trim();
     m.tags.removeEmptyStrings();
     m.date = juce::Time::getCurrentTime().toISO8601 (true);
+    // `extra` is deliberately left alone here: it belongs to a *document*, not to these editors,
+    // and saving and renaming disagree about which document that is. Each fills it in itself.
     return m;
 }
 
 void PresetPanel::writeTo (const juce::File& file)
 {
-    const auto meta = metadataFromEditors();
+    auto meta = metadataFromEditors();
+    // A save writes the *live* document, so its listable extras are the live one's.
+    meta.extra = host.captureExtraMetadata();
+
     if (! PresetFile::save (file, host.captureDocument(), meta, format))
     {
         showError ("Could not write \"" + file.getFullPathName() + "\".");
@@ -340,8 +486,36 @@ void PresetPanel::writeTo (const juce::File& file)
     host.documentSaved (file, saved);
 
     currentFile = file;
+    currentKey = file.getFullPathName();
     statusLabel.setText ("saved \"" + saved.name + "\"", juce::dontSendNotification);
     rescanAndRefreshList();
+}
+
+void PresetPanel::doNew()
+{
+    // Nothing is open afterwards, so nothing may be previewing either.
+    stopAuditionIfRunning();
+    host.newDocument();
+
+    // No file and no key: `updateEnablement` reads that as "this document has no file yet", which
+    // turns Save off and points at Save As -- an empty preset that cannot be written over anything
+    // is exactly what New is for.
+    currentFile = juce::File();
+    currentKey = {};
+
+    // Deselect *before* the details are refilled: with no row selected they default from the live
+    // document, which `newDocument()` has just emptied, so every field clears with nothing here
+    // having to name them one by one. `deselectAllRows` does not call back into the model, hence
+    // the state kept beside it is cleared by hand.
+    list.deselectAllRows();
+    selectedRow = -1;
+    haveSelection = false;
+    selectedCopy = {};
+    if (onSelectionChanged) onSelectionChanged (nullptr);
+
+    updateDetailsFromSelection();
+    updateEnablement();
+    statusLabel.setText ("new preset", juce::dontSendNotification);
 }
 
 void PresetPanel::doSave()
@@ -389,7 +563,8 @@ void PresetPanel::doSaveAs()
 
 void PresetPanel::doDelete()
 {
-    if (! haveSelection) return;
+    // Disabled for a built-in, but a keyboard route or a stale click must not get past it either.
+    if (! selectionIsWritable()) return;
     const auto copy = selectedCopy;
 
     auto opts = juce::MessageBoxOptions::makeOptionsOkCancel (
@@ -412,8 +587,11 @@ void PresetPanel::doDelete()
             return;
         }
 
-        if (copy.file == o->currentFile)
+        if (copy.key() == o->currentKey)
+        {
             o->currentFile = juce::File();   // its on-disk identity is gone; next Save is a Save As
+            o->currentKey = {};
+        }
 
         o->haveSelection = false;
         o->selectedRow = -1;
@@ -423,12 +601,17 @@ void PresetPanel::doDelete()
 
 void PresetPanel::doRename()
 {
-    if (! haveSelection) return;
+    if (! selectionIsWritable()) return;
 
     const auto oldFile = selectedCopy.file;
 
+    auto meta = metadataFromEditors();
+    // A rename edits a file that already exists, which may not be the open document -- so its
+    // extras stay the ones it was saved with rather than being restamped from the live document.
+    meta.extra = selectedCopy.meta.extra;
+
     juce::String err;
-    if (! library.renamePreset (selectedCopy, metadataFromEditors(), err))
+    if (! library.renamePreset (selectedCopy, meta, err))
     {
         showError (err);
         return;
@@ -436,9 +619,10 @@ void PresetPanel::doRename()
 
     // If this was the file the live document came from, keep it and this panel in step -- or the
     // next plain Save would write the old name straight back over the rename.
-    if (oldFile == currentFile)
+    if (oldFile != juce::File() && oldFile == currentFile)
     {
         currentFile = selectedCopy.file;
+        currentKey = selectedCopy.key();
         host.documentSaved (selectedCopy.file, selectedCopy.meta);
     }
 
@@ -477,12 +661,15 @@ void PresetPanel::showRowMenu (int row)
     }
     if (! haveSelection) return;
 
+    const bool writable = selectionIsWritable();
+
     juce::PopupMenu m;
-    m.addItem (1, "show in file manager");
-    m.addItem (2, "rename...");
-    m.addItem (3, "duplicate");
+    m.addItem (1, "show in file manager", writable);
+    m.addItem (2, "rename...", writable);
+    // Enabled for a built-in on purpose: duplicating is how one becomes editable.
+    m.addItem (3, writable ? "duplicate" : "duplicate to my presets");
     m.addSeparator();
-    m.addItem (4, "delete...");
+    m.addItem (4, "delete...", writable);
 
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&list),
                      [safe = juce::Component::SafePointer<PresetPanel> (this)] (int result)
@@ -540,6 +727,16 @@ void PresetPanel::resized()
     top.removeFromRight (4);
     searchBox.setBounds (top);
 
+    if (builtInToggle.isVisible())
+    {
+        auto sources = listCol.removeFromTop (20);
+        builtInToggle.setBounds (sources.removeFromLeft (90));
+        userToggle.setBounds (sources.removeFromLeft (70));
+    }
+
+    if (extras.extraFilters != nullptr && extras.extraFiltersHeight > 0)
+        extras.extraFilters->setBounds (listCol.removeFromTop (extras.extraFiltersHeight));
+
     listCol.removeFromTop (2);
     statusLabel.setBounds (listCol.removeFromBottom (16));
 
@@ -551,6 +748,18 @@ void PresetPanel::resized()
 
     // ── details column ───────────────────────────────────────────────────────
     auto r = details;
+
+    if (extras.detailsHeader != nullptr && extras.detailsHeaderHeight > 0)
+    {
+        extras.detailsHeader->setBounds (r.removeFromTop (extras.detailsHeaderHeight));
+        r.removeFromTop (4);
+    }
+    if (auditionButton.isVisible())
+    {
+        auditionButton.setBounds (r.removeFromTop (22).reduced (2, 0));
+        r.removeFromTop (4);
+    }
+
     nameLabel.setBounds (r.removeFromTop (14));
     {
         // The extension sits inside the name row, dimmed: part of the filename, not part of what
@@ -576,8 +785,11 @@ void PresetPanel::resized()
     dateLabel.setBounds (r.removeFromTop (14));
     r.removeFromTop (8);
 
+    // New sits with the two saves: the three things that decide what the live document *is*.
     auto row1 = r.removeFromTop (24);
-    saveButton.setBounds (row1.removeFromLeft (row1.getWidth() / 2).reduced (2, 0));
+    const int third = row1.getWidth() / 3;
+    newButton.setBounds (row1.removeFromLeft (third).reduced (2, 0));
+    saveButton.setBounds (row1.removeFromLeft (third).reduced (2, 0));
     saveAsButton.setBounds (row1.reduced (2, 0));
     r.removeFromTop (4);
     auto row2 = r.removeFromTop (24);

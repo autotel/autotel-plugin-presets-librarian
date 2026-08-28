@@ -368,4 +368,176 @@ struct PresetPanelHookTests : juce::UnitTest
 };
 
 static PresetPanelHookTests presetPanelHookTests;
+
+/** Built-ins, the plugin-owned `extra` metadata tree, and the extra filter predicate: the three
+    things a plugin needs when it ships presets inside its binary rather than only on disk. */
+struct BuiltInPresetTests : juce::UnitTest
+{
+    BuiltInPresetTests() : juce::UnitTest ("atl::PresetLibrary built-ins", "presets") {}
+
+    /** A built-in's bytes are whatever `save()` writes -- the same format as a file, because a
+        built-in *is* a file that happens to have been compiled in. */
+    static juce::MemoryBlock makeBuiltInData (const juce::File& scratch, const PresetFormat& format,
+                                              const PresetMetadata& meta)
+    {
+        const auto tmp = scratch.getChildFile ("staging" + format.extension);
+        PresetFile::save (tmp, makeDocument(), meta, format);
+        juce::MemoryBlock data;
+        tmp.loadFileAsData (data);
+        tmp.deleteFile();
+        return data;
+    }
+
+    void runTest() override
+    {
+        const auto format = testFormat();
+        auto tempDir = juce::File::createTempFile ("atl-builtin-tests");
+        tempDir.deleteFile();
+        tempDir.createDirectory();
+
+        PresetMetadata bellMeta;
+        bellMeta.name = "ignored -- the resource name wins";
+        bellMeta.author = "factory";
+        bellMeta.tags = { "bell", "tonal" };
+        bellMeta.date = "2026-01-01T00:00:00";
+        juce::ValueTree extra { "LanesExtra" };
+        extra.setProperty ("durationSamples", 44100, nullptr);
+        extra.setProperty ("loopKind", "oneshot", nullptr);
+        bellMeta.extra = extra;
+
+        const auto bellData = makeBuiltInData (tempDir, format, bellMeta);
+
+        beginTest ("the extra tree round-trips untouched through a save and a scan");
+        {
+            const auto file = tempDir.getChildFile ("extra" + format.extension);
+            expect (PresetFile::save (file, makeDocument(), bellMeta, format));
+
+            const auto loaded = PresetFile::load (file, format);
+            expect (loaded.has_value());
+            expect (loaded->meta.extra.isValid());
+            expect (loaded->meta.extra.hasType ("LanesExtra"));
+            expectEquals ((int) loaded->meta.extra.getProperty ("durationSamples"), 44100);
+            expectEquals (loaded->meta.extra.getProperty ("loopKind").toString(),
+                          juce::String ("oneshot"));
+
+            // Scanning must see it too -- that is what it is for.
+            const auto scanned = PresetFile::scanMetadataOnly (file, format);
+            expect (scanned.has_value());
+            expectEquals ((int) scanned->extra.getProperty ("durationSamples"), 44100);
+
+            // And re-saving a loaded preset must not stack up wrappers.
+            expect (PresetFile::save (file, loaded->tree, loaded->meta, format));
+            const auto again = PresetFile::load (file, format);
+            expect (again.has_value());
+            expectEquals ((int) again->meta.extra.getProperty ("durationSamples"), 44100);
+            file.deleteFile();
+        }
+
+        beginTest ("a built-in loads from memory and takes its name from the resource");
+        {
+            const auto loaded = PresetFile::loadFromData (bellData.getData(), (int) bellData.getSize(),
+                                                          "Bell", format);
+            expect (loaded.has_value());
+            expectEquals (loaded->meta.name, juce::String ("Bell"));
+            expectEquals (loaded->meta.author, juce::String ("factory"));
+            expectEquals ((int) loaded->tree.getChild (0).getProperty ("value"), 42);
+        }
+
+        beginTest ("garbage in memory is skipped, not fatal");
+        {
+            const char junk[] = "not a value tree at all";
+            expect (! PresetFile::loadFromData (junk, (int) sizeof (junk), "x", format).has_value());
+            expect (! PresetFile::loadFromData (nullptr, 0, "x", format).has_value());
+            expect (! PresetFile::scanMetadataOnlyFromData (junk, (int) sizeof (junk), "x", format)
+                          .has_value());
+        }
+
+        beginTest ("built-ins list ahead of the folder and survive a rescan");
+        {
+            PresetFile::save (tempDir.getChildFile ("mine" + format.extension), makeDocument(),
+                              makeMeta(), format);
+
+            PresetLibrary lib (format, tempDir);
+            lib.setBuiltIns ({ { "Bell", "ReadyMade", bellData.getData(), (int) bellData.getSize() } });
+            lib.rescan();
+
+            expectEquals ((int) lib.getAll().size(), 2);
+            expect (lib.getAll()[0].isBuiltIn);
+            expectEquals (lib.getAll()[0].meta.name, juce::String ("Bell"));
+            expectEquals (lib.getAll()[0].category, juce::String ("ReadyMade"));
+            expect (! lib.getAll()[1].isBuiltIn);
+
+            // A built-in's key must not collide with a file's, and must be stable across rescans.
+            const auto key = lib.getAll()[0].key();
+            lib.rescan();
+            expectEquals (lib.getAll()[0].key(), key);
+            expect (key != lib.getAll()[1].key());
+        }
+
+        beginTest ("the source toggles and the extra predicate both filter");
+        {
+            PresetLibrary lib (format, tempDir);
+            lib.setBuiltIns ({ { "Bell", "ReadyMade", bellData.getData(), (int) bellData.getSize() } });
+            lib.rescan();
+
+            PresetFilter f;
+            f.includeBuiltIn = false;
+            expectEquals ((int) lib.getFiltered (f).size(), 1);
+            expect (! lib.getFiltered (f)[0]->isBuiltIn);
+
+            f = {};
+            f.includeUser = false;
+            expectEquals ((int) lib.getFiltered (f).size(), 1);
+            expect (lib.getFiltered (f)[0]->isBuiltIn);
+
+            // The predicate is the last word, and it can read the plugin's own extra tree.
+            f = {};
+            f.extraPredicate = [] (const PresetEntry& e)
+            {
+                return (int) e.meta.extra.getProperty ("durationSamples", 0) == 44100;
+            };
+            expectEquals ((int) lib.getFiltered (f).size(), 1);
+            expectEquals (lib.getFiltered (f)[0]->meta.name, juce::String ("Bell"));
+        }
+
+        beginTest ("a built-in refuses rename and delete, but duplicates into the preset folder");
+        {
+            PresetLibrary lib (format, tempDir);
+            lib.setBuiltIns ({ { "Bell", "ReadyMade", bellData.getData(), (int) bellData.getSize() } });
+            lib.rescan();
+
+            auto builtIn = lib.getAll()[0];
+            juce::String err;
+
+            expect (! lib.deletePreset (builtIn, err));
+            expect (err.isNotEmpty());
+
+            err.clear();
+            expect (! lib.renamePreset (builtIn, makeMeta(), err));
+            expect (err.isNotEmpty());
+
+            err.clear();
+            juce::File copy;
+            expect (lib.duplicatePreset (builtIn, copy, err), err);
+            expect (copy.existsAsFile());
+            // Named after the built-in, not "Bell 2" -- nothing was called Bell yet.
+            expectEquals (copy.getFileNameWithoutExtension(), juce::String ("Bell"));
+
+            // And the copy is an ordinary, writable preset carrying the same document.
+            const auto reloaded = PresetFile::load (copy, format);
+            expect (reloaded.has_value());
+            expectEquals ((int) reloaded->tree.getChild (0).getProperty ("value"), 42);
+
+            lib.rescan();
+            bool foundWritableBell = false;
+            for (const auto& e : lib.getAll())
+                if (! e.isBuiltIn && e.meta.name == "Bell") foundWritableBell = true;
+            expect (foundWritableBell);
+        }
+
+        tempDir.deleteRecursively();
+    }
+};
+
+static BuiltInPresetTests builtInPresetTests;
 } // namespace

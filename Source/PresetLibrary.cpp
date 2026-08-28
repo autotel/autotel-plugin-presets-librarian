@@ -6,9 +6,37 @@ namespace atl
 PresetLibrary::PresetLibrary (PresetFormat format, juce::File presetDir)
     : format_ (std::move (format)), presetDir_ (std::move (presetDir)) {}
 
+void PresetLibrary::setBuiltIns (std::vector<BuiltInPreset> builtIns)
+{
+    builtIns_ = std::move (builtIns);
+}
+
 void PresetLibrary::rescan()
 {
     entries_.clear();
+    rescanBuiltIns();
+    rescanFolder();
+}
+
+void PresetLibrary::rescanBuiltIns()
+{
+    for (const auto& b : builtIns_)
+    {
+        auto meta = PresetFile::scanMetadataOnlyFromData (b.data, b.size, b.name, format_);
+        if (! meta.has_value()) continue;   // a built-in this build cannot parse is still just a skip
+
+        PresetEntry e;
+        e.isBuiltIn = true;
+        e.category = b.category;
+        e.data = b.data;
+        e.dataSize = b.size;
+        e.meta = *meta;
+        entries_.push_back (std::move (e));
+    }
+}
+
+void PresetLibrary::rescanFolder()
+{
     if (! presetDir_.isDirectory()) return;
 
     const auto pattern = juce::String ("*") + format_.extension;
@@ -20,6 +48,11 @@ void PresetLibrary::rescan()
         PresetEntry e;
         e.file = f;
         e.meta = *meta;
+        // A folder under the preset dir reads as a category, the way it already reads as one to
+        // anybody looking at the folder in a file manager.
+        e.category = f.getParentDirectory() == presetDir_
+                        ? juce::String()
+                        : f.getParentDirectory().getRelativePathFrom (presetDir_);
         entries_.push_back (std::move (e));
     }
 }
@@ -40,6 +73,8 @@ std::vector<const PresetEntry*> PresetLibrary::getFiltered (const PresetFilter& 
 
     for (const auto& e : entries_)
     {
+        if (e.isBuiltIn ? ! filter.includeBuiltIn : ! filter.includeUser) continue;
+
         if (! filter.requiredTags.isEmpty())
         {
             bool hasAll = true;
@@ -61,6 +96,8 @@ std::vector<const PresetEntry*> PresetLibrary::getFiltered (const PresetFilter& 
             if (! matches) continue;
         }
 
+        if (filter.extraPredicate && ! filter.extraPredicate (e)) continue;
+
         out.push_back (&e);
     }
 
@@ -69,6 +106,7 @@ std::vector<const PresetEntry*> PresetLibrary::getFiltered (const PresetFilter& 
 
 bool PresetLibrary::deletePreset (const PresetEntry& entry, juce::String& errorOut)
 {
+    if (entry.isBuiltIn) { errorOut = "Built-in presets cannot be deleted."; return false; }
     if (! entry.file.existsAsFile()) { errorOut = "File no longer exists."; return false; }
 
     bool ok = entry.file.moveToTrash();
@@ -87,6 +125,11 @@ bool PresetLibrary::deletePreset (const PresetEntry& entry, juce::String& errorO
 bool PresetLibrary::renamePreset (PresetEntry& entry, const PresetMetadata& newMeta,
                                   juce::String& errorOut)
 {
+    if (entry.isBuiltIn)
+    {
+        errorOut = "Built-in presets cannot be renamed or edited -- duplicate it first.";
+        return false;
+    }
     if (! entry.file.existsAsFile()) { errorOut = "File no longer exists."; return false; }
 
     auto loaded = PresetFile::load (entry.file, format_);
@@ -121,6 +164,33 @@ bool PresetLibrary::renamePreset (PresetEntry& entry, const PresetMetadata& newM
 bool PresetLibrary::duplicatePreset (const PresetEntry& entry, juce::File& newFileOut,
                                      juce::String& errorOut)
 {
+    // A built-in has no folder of its own, so its copy goes to the preset folder -- which is also
+    // the only writable place it could go.
+    if (entry.isBuiltIn)
+    {
+        if (entry.data == nullptr || entry.dataSize <= 0)
+        {
+            errorOut = "This built-in has no data to copy.";
+            return false;
+        }
+        if (! presetDir_.isDirectory() && ! presetDir_.createDirectory().wasOk())
+        {
+            errorOut = "Could not create \"" + presetDir_.getFullPathName() + "\".";
+            return false;
+        }
+
+        const auto target = PresetFile::resolveCollision (presetDir_, entry.meta.name, format_);
+        if (! target.replaceWithData (entry.data, (size_t) entry.dataSize))
+        {
+            errorOut = "Could not write \"" + target.getFullPathName() + "\".";
+            return false;
+        }
+
+        newFileOut = target;
+        rescan();
+        return true;
+    }
+
     if (! entry.file.existsAsFile()) { errorOut = "File no longer exists."; return false; }
 
     const auto target = PresetFile::resolveCollision (entry.file.getParentDirectory(),

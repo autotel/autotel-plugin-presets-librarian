@@ -9,6 +9,7 @@ namespace id
 {
 #define ATL_ID(x) static const juce::Identifier x { #x };
 ATL_ID (PresetMeta) ATL_ID (description) ATL_ID (comment) ATL_ID (tags) ATL_ID (date)
+ATL_ID (PresetExtra)
 #undef ATL_ID
 }
 
@@ -54,6 +55,16 @@ juce::ValueTree PresetMetadata::toValueTree() const
     t.setProperty (id::comment, comment, nullptr);
     t.setProperty (id::tags, tags.joinIntoString (","), nullptr);
     t.setProperty (id::date, date, nullptr);
+
+    // A copy, and wrapped in a node of the librarian's own naming: the caller's tree must not
+    // acquire a parent as a side effect of being described, and whatever type the plugin gave it
+    // must not collide with a child the librarian may add later.
+    if (extra.isValid())
+    {
+        juce::ValueTree wrapper { id::PresetExtra };
+        wrapper.appendChild (extra.createCopy(), nullptr);
+        t.appendChild (wrapper, nullptr);
+    }
     return t;
 }
 
@@ -74,6 +85,10 @@ PresetMetadata PresetMetadata::fromValueTree (const juce::ValueTree& presetMetaT
         m.tags.trim();
         m.tags.removeEmptyStrings();
         m.date = presetMetaTree.getProperty (id::date, "").toString();
+
+        if (auto wrapper = presetMetaTree.getChildWithName (id::PresetExtra); wrapper.isValid()
+                                                                              && wrapper.getNumChildren() > 0)
+            m.extra = wrapper.getChild (0).createCopy();
     }
 
     if (m.date.isEmpty())
@@ -114,38 +129,71 @@ bool save (const juce::File& file, juce::ValueTree document, const PresetMetadat
     return temp.overwriteTargetFileWithTemporary();
 }
 
+namespace
+{
+/** Shared by the file and the in-memory paths: the only thing that differs between a preset on
+    disk and one shipped inside the binary is where the name comes from. */
+Loaded finishLoad (juce::ValueTree root, const juce::String& name, const PresetFormat& format)
+{
+    // The name from outside the tree wins. A name inside it only stands in for a tree with no file
+    // behind it -- a host state chunk, or something hand-assembled.
+    if (name.isNotEmpty())
+        root.setProperty (format.nameProperty, name, nullptr);
+
+    Loaded out;
+    out.meta = PresetMetadata::fromValueTree (root.getChildWithName (id::PresetMeta),
+                                              root.getProperty (format.nameProperty, "").toString(),
+                                              root.getProperty (format.authorProperty, "").toString());
+    // Handed over without the librarian's own child: the plugin gets its document back as it
+    // wrote it, not with a node it has to know to ignore.
+    root.removeChild (root.getChildWithName (id::PresetMeta), nullptr);
+    out.tree = root;
+    return out;
+}
+
+PresetMetadata finishScan (const juce::ValueTree& root, const juce::String& name,
+                           const PresetFormat& format)
+{
+    const auto resolved = name.isNotEmpty() ? name
+                                            : root.getProperty (format.nameProperty, "").toString();
+    return PresetMetadata::fromValueTree (root.getChildWithName (id::PresetMeta), resolved,
+                                          root.getProperty (format.authorProperty, "").toString());
+}
+} // namespace
+
 std::optional<Loaded> load (const juce::File& file, const PresetFormat& format)
 {
     auto root = readRootFromFile (file, format);
     if (! root.has_value()) return std::nullopt;
-
-    // The filename wins. A name inside the tree only stands in for a tree with no file behind it
-    // -- a host state chunk, or something hand-assembled.
-    const auto nameFromFile = file.getFileNameWithoutExtension();
-    if (nameFromFile.isNotEmpty())
-        root->setProperty (format.nameProperty, nameFromFile, nullptr);
-
-    Loaded out;
-    out.meta = PresetMetadata::fromValueTree (root->getChildWithName (id::PresetMeta),
-                                              root->getProperty (format.nameProperty, "").toString(),
-                                              root->getProperty (format.authorProperty, "").toString());
-    // Handed over without the librarian's own child: the plugin gets its document back as it
-    // wrote it, not with a node it has to know to ignore.
-    root->removeChild (root->getChildWithName (id::PresetMeta), nullptr);
-    out.tree = *root;
-    return out;
+    return finishLoad (*root, file.getFileNameWithoutExtension(), format);
 }
 
 std::optional<PresetMetadata> scanMetadataOnly (const juce::File& file, const PresetFormat& format)
 {
     auto root = readRootFromFile (file, format);
     if (! root.has_value()) return std::nullopt;
+    return finishScan (*root, file.getFileNameWithoutExtension(), format);
+}
 
-    const auto fromFile = file.getFileNameWithoutExtension();
-    const auto name = fromFile.isNotEmpty() ? fromFile
-                                            : root->getProperty (format.nameProperty, "").toString();
-    return PresetMetadata::fromValueTree (root->getChildWithName (id::PresetMeta), name,
-                                          root->getProperty (format.authorProperty, "").toString());
+std::optional<Loaded> loadFromData (const void* data, int sizeInBytes, const juce::String& name,
+                                    const PresetFormat& format)
+{
+    if (data == nullptr || sizeInBytes <= 0) return std::nullopt;
+
+    auto root = parseRoot (juce::MemoryBlock (data, (size_t) sizeInBytes), format);
+    if (! root.isValid()) return std::nullopt;
+    return finishLoad (root, name, format);
+}
+
+std::optional<PresetMetadata> scanMetadataOnlyFromData (const void* data, int sizeInBytes,
+                                                        const juce::String& name,
+                                                        const PresetFormat& format)
+{
+    if (data == nullptr || sizeInBytes <= 0) return std::nullopt;
+
+    auto root = parseRoot (juce::MemoryBlock (data, (size_t) sizeInBytes), format);
+    if (! root.isValid()) return std::nullopt;
+    return finishScan (root, name, format);
 }
 
 juce::File defaultPresetFolder (const juce::File& settingsDir)
