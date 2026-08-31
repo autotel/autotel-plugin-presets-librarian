@@ -321,11 +321,12 @@ struct RecordingHost : PresetHost
     PresetMetadata lastMeta;
 };
 
-/** Drives a real PresetPanel the way a click on its list would -- selectRow() on the ListBox
-    calls its model's selectedRowsChanged() synchronously (see juce_ListBox.cpp), which is
-    PresetPanel's own load path (ListModel::selectedRowsChanged -> selectionChanged ->
-    loadEntry()). `list`/`loadEntry()` are private, so this walks the panel's real child
-    components for the one juce::ListBox it owns rather than adding a test-only accessor. */
+/** Drives a real PresetPanel the way a click on its list, then its Load button, would --
+    selectRow() on the ListBox calls its model's selectedRowsChanged() synchronously (see
+    juce_ListBox.cpp), and a TextButton's `onClick` is a public std::function that can be invoked
+    directly without pumping the message loop. `list`/`loadButton`/`loadEntry()` are private, so
+    this walks the panel's real child components for the juce::ListBox and the "load"
+    juce::TextButton rather than adding test-only accessors. */
 struct PresetPanelHookTests : juce::UnitTest
 {
     PresetPanelHookTests() : juce::UnitTest ("atl::PresetPanel", "presets") {}
@@ -347,20 +348,71 @@ struct PresetPanelHookTests : juce::UnitTest
         panel.setSize (400, 300);
 
         juce::ListBox* list = nullptr;
-        for (int i = 0; i < panel.getNumChildComponents() && list == nullptr; ++i)
-            list = dynamic_cast<juce::ListBox*> (panel.getChildComponent (i));
+        juce::TextButton* loadButton = nullptr;
+        for (int i = 0; i < panel.getNumChildComponents(); ++i)
+        {
+            auto* child = panel.getChildComponent (i);
+            if (list == nullptr) list = dynamic_cast<juce::ListBox*> (child);
+            if (auto* b = dynamic_cast<juce::TextButton*> (child); b != nullptr
+                && b->getButtonText() == "load")
+                loadButton = b;
+        }
 
-        beginTest ("selecting a row fires documentLoaded, not documentSaved");
+        beginTest ("selecting a row does not load it");
         {
             expect (list != nullptr, "PresetPanel must own exactly one juce::ListBox");
             if (list == nullptr) return;
 
             list->selectRow (0);
 
+            expectEquals (host.loadedCount, 0);
+            expectEquals (host.savedCount, 0);
+        }
+
+        beginTest ("the load button fires documentLoaded, not documentSaved");
+        {
+            expect (loadButton != nullptr, "PresetPanel must own a \"load\" TextButton");
+            if (loadButton == nullptr) return;
+
+            loadButton->onClick();
+
             expectEquals (host.loadedCount, 1);
             expectEquals (host.savedCount, 0);
             expectEquals (host.lastFile.getFileNameWithoutExtension(), juce::String ("kit"));
             expectEquals (host.lastMeta.name, juce::String ("kit"));
+        }
+
+        beginTest ("Return on the list is a shortcut for Load");
+        {
+            // Straight at the model, because delivering a real keypress needs a focused, visible
+            // window -- what is being asserted is that the hook is wired to Load at all.
+            if (auto* model = list->getListBoxModel(); model != nullptr)
+                model->returnKeyPressed (0);
+
+            expectEquals (host.loadedCount, 2);
+            expectEquals (host.savedCount, 0);
+        }
+
+        beginTest ("double-clicking a row is a shortcut for Load");
+        {
+            // position, mods, pressure, orientation, rotation, tiltX, tiltY, then the two
+            // components, the two times either side of mouseDownPosition, and the click count.
+            const juce::MouseEvent e (juce::Desktop::getInstance().getMainMouseSource(),
+                                      {}, {}, {}, {}, {}, {}, {},
+                                      list, list, {}, {}, {}, 2, false);
+            if (auto* model = list->getListBoxModel(); model != nullptr)
+                model->listBoxItemDoubleClicked (0, e);
+
+            expectEquals (host.loadedCount, 3);
+            expectEquals (host.savedCount, 0);
+        }
+
+        beginTest ("a shortcut on a row that is not the selected one loads nothing");
+        {
+            if (auto* model = list->getListBoxModel(); model != nullptr)
+                model->returnKeyPressed (7);   // no such row, and not the selection
+
+            expectEquals (host.loadedCount, 3);
         }
 
         tempDir.deleteRecursively();

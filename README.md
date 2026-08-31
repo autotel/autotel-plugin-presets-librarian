@@ -10,10 +10,10 @@ panel, so saving and browsing presets works the same way in every one of them.
   out of memory, for presets a plugin ships inside its own binary.
 - `atl::PresetLibrary` — scans a folder into rows, filters them, and does delete / rename /
   duplicate. Built-in presets list alongside the folder's.
-- `atl::PresetPanel` — the librarian tab: filtered list, details column, save / save as / rename /
-  delete, and a row context menu.
+- `atl::PresetPanel` — the librarian tab: filtered list, details column, load / new / save / save as
+  / rename / delete, and a row context menu.
 
-Two rules the rest of the design follows from:
+Three rules the rest of the design follows from:
 
 1. **A preset's name is its filename.** `save()` stamps the file's base name into the document it
    writes; `load()` reads the name back off the file. Renaming a file in a file manager renames the
@@ -21,6 +21,12 @@ Two rules the rest of the design follows from:
    goes in `comment`, which is shown in the list and is never part of a name.
 2. **The librarian does not know what a document means.** It moves `juce::ValueTree`s around. What
    a plugin's tree contains, and what happens when one is loaded, is the plugin's business.
+3. **Browsing is not loading.** Selecting a row highlights it and fills the details column; it never
+   touches the live document. **Load** is the only thing that does — double-clicking a row and
+   pressing Return are shortcuts for it. Scrolling the list can't lose unsaved work, so a plugin
+   whose `applyDocument` is expensive or disruptive — one that rebuilds a graph, rereads sample
+   files, interrupts audio — pays for it only when asked. Hearing a row without loading it is what
+   `PresetAuditioner` is for.
 
 ## Using it from a plugin
 
@@ -92,8 +98,9 @@ Neither is needed for a plain librarian.
   controls), and the `extraFilterPredicate` those controls drive. Components are borrowed, not owned.
   Call `refilter()` when they change.
 - `PresetPanel::setAuditioner` takes a `PresetAuditioner` and turns on an audition button driven by
-  the selected row. The librarian never learns that audition means audio — it asks whether a row can
-  be previewed and says when to start and stop.
+  the selected row — the answer to rule 3's "how do I hear it before I commit to it". The librarian
+  never learns that audition means audio — it asks whether a row can be previewed and says when to
+  start and stop. Changing rows, and closing the panel, stop whatever was previewing.
 
 ## Tests
 
@@ -101,7 +108,8 @@ Neither is needed for a plain librarian.
 project adds `${ATL_PRESETS_TEST_SOURCES}` to its own test binary (see above). They cover the
 naming rule, the metadata round-trip, the scanner, rename / duplicate / delete, the `extra` tree,
 and built-ins: loading from memory, key stability, the source toggles and the extra predicate, and
-the refuse-to-write / duplicate-instead rules.
+the refuse-to-write / duplicate-instead rules. One of them drives a real `PresetPanel`: selecting a
+row must *not* load it, and Load must fire `documentLoaded` and not `documentSaved`.
 
 ## Where it came from
 

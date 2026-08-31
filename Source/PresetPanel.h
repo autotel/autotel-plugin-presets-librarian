@@ -46,8 +46,8 @@ struct PresetHost
     /** The document now lives in `file` under this metadata -- after a plain Load. Together with
         `documentSaved()` above, this covers every path by which the live document's on-disk
         identity can change; a plugin that shows the patch name elsewhere updates it here too, not
-        just in `documentSaved()`, since selecting a row loads it immediately and never calls
-        that. */
+        just in `documentSaved()`, because loading is the one path that changes it without any file
+        being written. */
     virtual void documentLoaded (const juce::File& file, const PresetMetadata& meta) { juce::ignoreUnused (file, meta); }
 };
 
@@ -110,8 +110,10 @@ struct PresetPanelColours
     carries no ellipsis. The annotation a filename cannot carry goes in the comment field, which is
     shown in the list and is never part of a name.
 
-    Selecting a row loads it immediately -- the librarian is for browsing sounds, and a click that
-    only highlights is a click wasted. Nothing is destructive until Save, Rename or Delete. */
+    Selecting a row only highlights it and fills in the details column -- it never touches the live
+    document. Loading it into the live document is Load's job, so browsing the list (or previewing
+    with the auditioner, where available) is always safe. Nothing is destructive until Load, Save,
+    Rename or Delete. */
 class PresetPanel : public juce::Component
 {
 public:
@@ -158,8 +160,12 @@ private:
         void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
         void selectedRowsChanged (int lastRowSelected) override;
         /** Right-click opens the row's menu; a plain click is left to `selectedRowsChanged`, which
-            is what loads the preset. */
+            only updates the selection -- Load is what loads the preset. */
         void listBoxItemClicked (int row, const juce::MouseEvent&) override;
+        /** Double-click and Return are the shortcuts for Load, so the button is the discoverable
+            way to load rather than the only one. Both run after the row is already selected. */
+        void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
+        void returnKeyPressed (int lastRowSelected) override;
         PresetPanel& owner;
     };
 
@@ -174,6 +180,10 @@ private:
     void updateEnablement();
 
     void loadEntry (const PresetEntry&);
+    /** Loads the selected row into the live document -- the only thing in this panel that does.
+        Behind the Load button, a double-click and Return. Loading the row that is already open is
+        allowed on purpose: that is how a document gets reverted to what is on disk. */
+    void doLoad();
     PresetMetadata metadataFromEditors() const;
 
     /** Whether the selected row is one this panel is allowed to write to. */
@@ -251,6 +261,7 @@ private:
     juce::TextEditor tagsEditor;
     juce::Label dateLabel;
 
+    juce::TextButton loadButton { "load" };
     juce::TextButton auditionButton { "audition" };
     juce::TextButton newButton { "new" };
     juce::TextButton saveButton { "save" };

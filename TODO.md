@@ -39,6 +39,29 @@ part, it happened concurrently while this session was working the `newDocument()
       oversight. Getting a `newDocument()` test running needs a deliberate call to shim those
       macros in (or a lighter seam) — left undone rather than forced.
 
+## Browsing is not loading (2026-08-31, uncommitted)
+
+Selecting a row used to load it into the live document. It no longer does: selecting only fills the
+details column, and a new **load** button — with double-click and Return as shortcuts — is the only
+thing that loads. Rule 3 in the README. The reason is the one the auditioner already implied: a
+plugin whose `applyDocument` rebuilds a graph or rereads sample files should pay for that when
+asked, not on every arrow-key press, and browsing should never be able to lose unsaved work.
+
+- Librarian: `PresetPanel::doLoad()`, the button, the two `ListBoxModel` shortcut hooks; the
+  auto-load dropped from `selectionChanged()`. Loading the already-open row is allowed on purpose —
+  that is revert-to-disk.
+- Tests: five `atl::PresetPanel` cases — select-does-not-load, Load fires `documentLoaded` and not
+  `documentSaved`, both shortcuts, and a shortcut aimed at a row that is not the selection.
+- Verified in both consumers. Sampler: full build + suite clean. Lanes: `LanesAudioPlugin_VST3`
+  clean, `LanesTests` 36008 checks / 227 tests, exit 0. No Lanes logic depended on the old
+  behaviour — `LibrarianPanel::selectionChanged()` never loaded, and `onPatchLoaded` hangs off the
+  host's load path either way.
+- One visible Lanes behaviour change, for the better: arrow-keying the list no longer switches the
+  editor to the Synthesis tab on every row, because that switch rode on the auto-load.
+- Lanes doc/comment fixes are **uncommitted in `~/dev/lanes-audio-plugin`**: `LibrarianPanel.h`'s
+  header comment, and `manual.md`'s rule 2 plus its button list (which was also missing **new**
+  from an earlier round).
+
 ## Still open
 
 - [ ] **Commit the `newDocument()` change in Lanes.** Not committed by this session — the repo
@@ -49,6 +72,31 @@ part, it happened concurrently while this session was working the `newDocument()
 - [ ] Building `LanesAudioPlugin_VST3` installs to `~/.vst3/Lanes.vst3` as a build step — this
       session's builds overwrote whatever was live there. Reinstall a known-good build if a DAW
       session depends on the previously-installed one.
+- [ ] **Lanes bug found while documenting the load path: `notePatchOpened()` gets the wrong file.**
+      `PresetPanel::loadEntry()` calls `host.applyDocument()` before `host.documentLoaded()`.
+      `LanesPresetHost::applyDocument()` fires `onPatchLoaded` (LanesPresetHost.cpp:80), whose
+      handler runs `autosave_.notePatchOpened(processor_.getCurrentPatchFile())`
+      (LibrarianPanel.cpp:119) — but `setCurrentPatchFile(file)` does not happen until
+      `documentLoaded()` (LanesPresetHost.cpp:127). So autosave is told about the *previously* open
+      file, and about an empty file on the first load of a session. The callback's whole job is
+      "autosave must not start writing over the patch just opened", so it is guarding the wrong one.
+      Predates the browsing-is-not-loading change — the ordering was the same when selection loaded.
+      Not fixed here because the fix is a design call: reorder the two host calls in the shared
+      panel (which moves Sampler too), or fire `onPatchLoaded` from `documentLoaded` in Lanes and
+      decide what `newDocument()` — which fires it with no file at all — should do.
+- [ ] ~~**`developer-manual.md:1297-1311` in Lanes is stale, and predates this change.**~~ Done
+      2026-08-31, uncommitted: rewrote **Index cache** → **Scanning and built-ins** (no cache exists
+      any more; built-ins are a flat `BinaryData` conversion, not derived), rewrote **Librarian
+      tab**, corrected **File format** (the shared `writeToStream`/`<PresetMeta>` format, the
+      `<LanesMeta>` extra seam, and a pointer to `BREAKING-CHANGES.md` for the conversion), and
+      dropped the deleted `PatchFile`/`PatchLibrary` entries from the source-tree diagram. Original
+      note follows.
+
+      **`developer-manual.md:1297-1311` in Lanes is stale, and predates this change.** Its "Index
+      cache" and "Librarian tab" sections still describe the bespoke `PatchLibrary` and
+      `processor_.loadStateFromFile()`; `Source/Patch/PatchLibrary.*` was deleted in the migration
+      and `grep -rn "PatchLibrary" Source/` now returns nothing. Left alone rather than folded into
+      the browsing-is-not-loading pass, because it is a different piece of rot.
 
 ## Notes for future consumers
 

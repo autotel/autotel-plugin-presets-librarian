@@ -58,6 +58,20 @@ void PresetPanel::ListModel::listBoxItemClicked (int row, const juce::MouseEvent
     if (e.mods.isPopupMenu()) owner.showRowMenu (row);
 }
 
+void PresetPanel::ListModel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
+{
+    // The single click that opened this double-click already selected the row, so `doLoad` is
+    // acting on the one under the pointer. Guarded rather than assumed, because loading the wrong
+    // preset is exactly the mistake this panel's separate Load exists to make impossible.
+    if (row == owner.selectedRow) owner.doLoad();
+}
+
+void PresetPanel::ListModel::returnKeyPressed (int lastRowSelected)
+{
+    // Only called with a row selected (see juce::ListBoxModel), and the selection is already there.
+    if (lastRowSelected == owner.selectedRow) owner.doLoad();
+}
+
 // ── PresetPanel ──────────────────────────────────────────────────────────────
 
 PresetPanel::PresetPanel (PresetHost& h, PresetFormat f)
@@ -83,6 +97,12 @@ PresetPanel::PresetPanel (PresetHost& h, PresetFormat f)
         // Made visible only once a scan has found built-ins -- see applyFilterAndRefreshList.
         addChildComponent (*t);
     }
+
+    loadButton.setTooltip ("load the selected preset -- selecting a row only shows it, so browsing "
+                           "the list never touches what you are working on. Double-click a row, or "
+                           "press Return, to do the same thing.");
+    loadButton.onClick = [this] { doLoad(); };
+    addAndMakeVisible (loadButton);
 
     auditionButton.onClick = [this] { toggleAudition(); };
     addChildComponent (auditionButton);   // shown by setAuditioner
@@ -347,11 +367,6 @@ void PresetPanel::selectionChanged (int row)
 
     if (onSelectionChanged)
         onSelectionChanged (haveSelection ? &selectedCopy : nullptr);
-
-    // Selecting a row loads it, unless it is already the open one -- which is what stops a refresh
-    // re-selecting the same row from reloading the document on every unrelated edit.
-    if (haveSelection && selectedCopy.key() != currentKey)
-        loadEntry (selectedCopy);
 }
 
 void PresetPanel::updateDetailsFromSelection()
@@ -423,6 +438,8 @@ void PresetPanel::updateEnablement()
         deleteButton.setTooltip ({});
     }
 
+    loadButton.setEnabled (haveSelection);
+
     auditionButton.setEnabled (auditioner != nullptr && haveSelection
                                && auditioner->canAudition (selectedCopy));
 }
@@ -450,6 +467,12 @@ void PresetPanel::loadEntry (const PresetEntry& entry)
 
     statusLabel.setText ("loaded \"" + label + "\"", juce::dontSendNotification);
     updateEnablement();   // the open file changed, and with it what Save means
+}
+
+void PresetPanel::doLoad()
+{
+    if (! haveSelection) return;
+    loadEntry (selectedCopy);
 }
 
 PresetMetadata PresetPanel::metadataFromEditors() const
@@ -652,8 +675,7 @@ void PresetPanel::showRowMenu (int row)
 {
     if (! juce::isPositiveAndBelow (row, (int) rows.size())) return;
 
-    // Acting on the row under the pointer means selecting it first -- and selecting loads it, the
-    // same as a left click.
+    // Acting on the row under the pointer means selecting it first, the same as a left click.
     if (row != selectedRow)
     {
         list.selectRow (row);
@@ -754,9 +776,17 @@ void PresetPanel::resized()
         extras.detailsHeader->setBounds (r.removeFromTop (extras.detailsHeaderHeight));
         r.removeFromTop (4);
     }
-    if (auditionButton.isVisible())
     {
-        auditionButton.setBounds (r.removeFromTop (22).reduced (2, 0));
+        auto loadRow = r.removeFromTop (22);
+        if (auditionButton.isVisible())
+        {
+            loadButton.setBounds (loadRow.removeFromLeft (loadRow.getWidth() / 2).reduced (2, 0));
+            auditionButton.setBounds (loadRow.reduced (2, 0));
+        }
+        else
+        {
+            loadButton.setBounds (loadRow.reduced (2, 0));
+        }
         r.removeFromTop (4);
     }
 
