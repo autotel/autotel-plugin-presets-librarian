@@ -2,10 +2,46 @@
 #include "PresetPanel.h"
 #include <juce_core/juce_core.h>
 
+#if JUCE_LINUX || JUCE_MAC
+ #include <csignal>
+ #include <sys/resource.h>
+#endif
+
 using namespace atl;
 
 namespace
 {
+
+#if JUCE_LINUX || JUCE_MAC
+/** Forces the next write to a regular file in this process to fail with EFBIG -- the same class
+    of failure as ENOSPC on a full disk: FileOutputStream::write()/flush() return false, nothing
+    throws. RLIMIT_FSIZE=0 needs no special privilege (a process can always lower its own soft
+    limit) and guarantees failure on the very first byte, since offset 0 is already >= a 0-byte
+    limit -- no need to actually fill a disk. SIGXFSZ has to be ignored too, or the default
+    action (terminate the process) fires the instant the limit is hit, before write() gets a
+    chance to return -1/EFBIG. Both are restored in the destructor so later tests in this same
+    process (all tests share one binary/process here) are unaffected. */
+struct ScopedZeroFileSizeLimit
+{
+    ScopedZeroFileSizeLimit()
+    {
+        getrlimit (RLIMIT_FSIZE, &original);
+        previousHandler = std::signal (SIGXFSZ, SIG_IGN);
+        rlimit zero { 0, original.rlim_max };
+        setrlimit (RLIMIT_FSIZE, &zero);
+    }
+
+    ~ScopedZeroFileSizeLimit()
+    {
+        setrlimit (RLIMIT_FSIZE, &original);
+        std::signal (SIGXFSZ, previousHandler);
+    }
+
+    rlimit original {};
+    void (*previousHandler) (int) = nullptr;
+};
+#endif
+
 /** The format a test plugin would declare. Nothing here knows what "Doc" contains, which is the
     point of the librarian. */
 PresetFormat testFormat()
@@ -146,6 +182,52 @@ struct PresetFileTests : juce::UnitTest
             }
             expect (! PresetFile::load (foreign, format).has_value());
         }
+
+       #if JUCE_LINUX || JUCE_MAC
+        beginTest ("save() does not clobber a good file when the write fails partway through");
+        {
+            const auto file = tempDir.getChildFile ("full-disk" + format.extension);
+
+            auto goodMeta = makeMeta();
+            goodMeta.comment = "the good content that must survive a failed re-save";
+            expect (PresetFile::save (file, makeDocument(), goodMeta, format));
+
+            const auto before = PresetFile::load (file, format);
+            expect (before.has_value());
+
+            if (before.has_value())
+            {
+                bool saveUnderFailureSucceeded = true;
+                {
+                    ScopedZeroFileSizeLimit noSpaceLeft;
+                    auto badMeta = makeMeta();
+                    badMeta.comment = "must never reach disk";
+                    saveUnderFailureSucceeded = PresetFile::save (file, makeDocument(), badMeta, format);
+                }
+
+                expect (! saveUnderFailureSucceeded,
+                        "save() must report failure when the underlying write failed, not silently "
+                        "succeed while handing back a truncated file");
+
+                // Guarded rather than a bare REQUIRE-and-return: this is a juce::UnitTest, and
+                // returning out of runTest() here would also skip every beginTest() after this
+                // one in the file (there is no fatal/REQUIRE assertion in this framework -- see
+                // the `if (list == nullptr) return;` guard pattern used the same way further down
+                // for PresetPanelHookTests). Pre-fix, `after` is legitimately empty (the clobbered
+                // file is 0 bytes and fails to parse), and dereferencing it unconditionally here
+                // would crash the whole suite instead of just failing this one check.
+                // Compared against a plain copy taken before the failing save rather than
+                // against `before` itself: if this test ever fails again it must report a
+                // failure, not take the whole suite down on an optional deref.
+                const juce::String goodComment = before->meta.comment;
+                const auto after = PresetFile::load (file, format);
+                expect (after.has_value(), "the previously-saved file must still be there and still parse");
+                expectEquals (after.has_value() ? after->meta.comment : juce::String(), goodComment,
+                              "a failed save must leave the previously-saved content untouched, "
+                              "not a half-written temp file swapped over it");
+            }
+        }
+       #endif
 
         beginTest ("sanitiseFilename strips what a filesystem will not take");
         {

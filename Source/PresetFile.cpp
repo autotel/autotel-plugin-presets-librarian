@@ -120,12 +120,31 @@ bool save (const juce::File& file, juce::ValueTree document, const PresetMetadat
     root.removeChild (root.getChildWithName (id::PresetMeta), nullptr);
     root.appendChild (meta.toValueTree(), nullptr);
 
+    // Serialise to memory first so the exact byte count is known. ValueTree::writeToStream
+    // returns void and FileOutputStream reports a mid-write failure (a full disk, a quota) only
+    // through the bool of the write that hit it -- getStatus() carries the result of *opening*
+    // the file and nothing else, and flushBuffer() drops its failure on the floor entirely. So
+    // the only trustworthy check is the one below: every byte we meant to write is on disk.
+    // Without it a failed write still reached overwriteTargetFileWithTemporary(), which
+    // atomically swapped a truncated temp file over the user's good preset and returned true.
+    juce::MemoryOutputStream serialised;
+    root.writeToStream (serialised);
+    const auto expectedBytes = static_cast<juce::int64> (serialised.getDataSize());
+
     juce::TemporaryFile temp (file);
     {
         juce::FileOutputStream out (temp.getFile());
         if (! out.openedOk()) return false;
-        root.writeToStream (out);
+        if (! out.write (serialised.getData(), serialised.getDataSize())) return false;
+        out.flush();
     }
+
+    // The stream is closed here, so its buffer (and any failure flushing it) has landed: compare
+    // what is actually on disk before letting the temp file replace the target. Returning early
+    // leaves the target untouched -- ~TemporaryFile discards the bad temp file.
+    if (temp.getFile().getSize() != expectedBytes)
+        return false;
+
     return temp.overwriteTargetFileWithTemporary();
 }
 
