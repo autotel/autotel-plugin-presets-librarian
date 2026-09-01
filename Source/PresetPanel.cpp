@@ -127,6 +127,15 @@ PresetPanel::PresetPanel (PresetHost& h, PresetFormat f)
     for (auto* e : { &nameEditor, &authorEditor, &commentEditor, &descriptionEditor, &tagsEditor })
         addAndMakeVisible (*e);
 
+    // Named so anything asking "which component has the keyboard focus?" -- an accessibility
+    // client, a focus log -- gets an answer better than "a juce::TextEditor".
+    searchBox.setName ("preset filter");
+    nameEditor.setName ("preset name");
+    authorEditor.setName ("preset author");
+    commentEditor.setName ("preset comment");
+    descriptionEditor.setName ("preset description");
+    tagsEditor.setName ("preset tags");
+
     nameEditor.setTooltip ("the file's name -- editing it renames the preset. Save is off while "
                            "this does not match the open file; Save As writes the new name.");
     // Editing the name is what turns Save off, so the button has to follow every keystroke.
