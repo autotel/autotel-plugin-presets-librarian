@@ -26,7 +26,11 @@ target_link_libraries(atl_presets_files PUBLIC juce::juce_data_structures)
 # Plugins are shared objects, so everything linked into one has to be position independent.
 set_target_properties(atl_presets_files PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(atl_presets_ui STATIC Source/PresetPanel.cpp)
+add_library(atl_presets_ui STATIC
+    Source/PresetPanel.cpp
+    Source/PresetPanelStyle.cpp
+    Source/PresetPanelViews.cpp
+    Source/PresetEditPopover.cpp)
 target_include_directories(atl_presets_ui PUBLIC Source)
 target_compile_features(atl_presets_ui PUBLIC cxx_std_20)
 target_link_libraries(atl_presets_ui PUBLIC atl_presets_files juce::juce_gui_basics)
@@ -37,4 +41,6 @@ set_target_properties(atl_presets_ui PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # rather than one per library. `ATL_PRESETS_TEST_SOURCES` is absolute, so it works from anywhere.
 set(ATL_PRESETS_TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PresetFileTests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PresetLibraryTests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PresetPanelTests.cpp
     PARENT_SCOPE)

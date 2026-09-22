@@ -55,6 +55,34 @@ struct PresetMetadata
                                          const juce::String& authorFromTree);
 };
 
+/** What moving a preset folder did -- see `PresetFile::moveAllPresets`. Enough for the panel to say
+    what happened without re-reading either folder. */
+struct MigrationResult
+{
+    /** Every preset file moved. False means the move stopped at the first failure: the files in
+        `moved` are already at their new home, everything else is still where it was. */
+    bool ok = false;
+
+    /** Where each moved file now lives, in the order they were moved. */
+    juce::Array<juce::File> moved;
+
+    /** Where each file in `moved` came from -- same index, same order. What a caller holding a
+        reference to one of the old files (the open preset, a favourite) needs to follow it. */
+    juce::Array<juce::File> movedFrom;
+
+    /** Files left behind on purpose because they are not preset files -- a readme, a sample, a
+        `.DS_Store`. Paths relative to the source folder. */
+    juce::StringArray skipped;
+
+    /** The first failure, when `ok` is false. */
+    juce::String error;
+
+    /** Whether anything other than empty directories is still in the source folder afterwards --
+        skipped files, or presets a failed move did not get to. An old folder with something left
+        in it is not offered for deletion. */
+    bool sourceHasOtherContent = false;
+};
+
 /** Reads and writes preset files: a document `juce::ValueTree` with a `<PresetMeta>` child, written
     with `juce::ValueTree::writeToStream`. Binary rather than XML because a librarian may re-read a
     whole folder on a refresh, and because a preset file is not meant to be hand-edited.
@@ -107,6 +135,21 @@ namespace PresetFile
         (allowed to "collide" with itself -- used when re-saving a file in place). */
     juce::File resolveCollision (const juce::File& folder, const juce::String& baseName,
                                  const PresetFormat& format, const juce::File& ignoreFile = {});
+
+    /** How many files carrying `format.extension` are under `folder`, recursively -- what a
+        migration would move. Counts by extension only, the same way `moveAllPresets` picks. */
+    int countPresetFiles (const juce::File& folder, const PresetFormat& format);
+
+    /** Moves every file carrying `format.extension` under `from` (recursively, keeping each one's
+        subfolder relative to `from`) into `to`, one file at a time. Anything else is left where it
+        is and listed in `skipped`. A name already taken in the destination is resolved with
+        `resolveCollision` rather than overwritten. Stops at the first failure.
+
+        Never deletes `from`, and never touches anything outside the two folders. Refuses (with
+        `ok` false and nothing moved) when `to` is `from`, or is inside it, or when `from` is not a
+        directory. Creates `to` if needed. */
+    MigrationResult moveAllPresets (const juce::File& from, const juce::File& to,
+                                    const PresetFormat& format);
 }
 
 } // namespace atl

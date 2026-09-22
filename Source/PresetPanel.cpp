@@ -3,185 +3,232 @@
 namespace atl
 {
 
-// ── list model ────────────────────────────────────────────────────────────────
-
-int PresetPanel::ListModel::getNumRows() { return (int) owner.rows.size(); }
-
-void PresetPanel::ListModel::paintListBoxItem (int row, juce::Graphics& g, int width, int height,
-                                               bool selected)
+namespace
 {
-    if (! juce::isPositiveAndBelow (row, (int) owner.rows.size())) return;
-    const auto& e = *owner.rows[(size_t) row];
-    const auto& c = owner.colours;
+const juce::String ellipsis (juce::CharPointer_UTF8 ("\xe2\x80\xa6"));
+const juce::String middot   (juce::CharPointer_UTF8 ("\xc2\xb7"));
+const juce::String emDash   (juce::CharPointer_UTF8 ("\xe2\x80\x94"));
 
-    if (selected)
+juce::String quoted (const juce::String& s)
+{
+    return juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x9c")) + s
+         + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x9d"));
+}
+
+juce::String plural (int n, const juce::String& noun)
+{
+    return juce::String (n) + " " + noun + (n == 1 ? "" : "s");
+}
+
+/** Sort box item ids, in the order the design lists them. */
+enum SortId { byName = 1, byDate, byAuthor, byTag, byFavourite, bySource };
+
+PresetSortKey sortKeyFor (int id)
+{
+    switch (id)
     {
-        g.setColour (c.accent.withAlpha (0.25f));
-        g.fillRect (0, 0, width, height);
+        case byDate:      return PresetSortKey::dateModified;
+        case byAuthor:    return PresetSortKey::author;
+        case byTag:       return PresetSortKey::firstTag;
+        case byFavourite: return PresetSortKey::favouritesFirst;
+        case bySource:    return PresetSortKey::source;
+        default:          return PresetSortKey::name;
     }
-
-    // By key, not by file: a built-in has no file, so comparing files would mark every built-in
-    // as the open one whenever nothing is open.
-    const bool isOpen = ! owner.currentKey.isEmpty() && e.key() == owner.currentKey;
-    g.setColour (isOpen ? c.accent : (e.isBuiltIn ? c.text.withAlpha (0.75f) : c.text));
-    g.setFont (juce::FontOptions (12.5f, juce::Font::bold));
-
-    juce::String title;
-    if (isOpen) title += juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xb8 "));
-    // A padlock, because a built-in row offers everything except writing to it.
-    if (e.isBuiltIn) title += juce::String (juce::CharPointer_UTF8 ("\xf0\x9f\x94\x92 "));
-    // The filename is the name (see PresetMetadata), so it is what the row says.
-    title += e.isBuiltIn ? e.meta.name : e.file.getFileNameWithoutExtension();
-    g.drawText (title, 8, 1, width - 12, height / 2, juce::Justification::centredLeft, true);
-
-    juce::StringArray subParts;
-    if (e.category.isNotEmpty()) subParts.add (e.category);
-    // First of the user's own, because it is the note they left themselves about *this* file.
-    if (e.meta.comment.isNotEmpty()) subParts.add (e.meta.comment);
-    if (e.meta.author.isNotEmpty()) subParts.add (e.meta.author);
-    if (! e.meta.tags.isEmpty()) subParts.add (e.meta.tags.joinIntoString (", "));
-    if (e.meta.date.isNotEmpty()) subParts.add (e.meta.date.substring (0, 10));   // just the date
-
-    g.setColour (c.textDim);
-    g.setFont (juce::FontOptions (10.0f));
-    g.drawText (subParts.joinIntoString ("   \xc2\xb7   "), 8, height / 2, width - 12,
-                height - height / 2, juce::Justification::centredLeft, true);
 }
+} // namespace
 
-void PresetPanel::ListModel::selectedRowsChanged (int lastRowSelected)
-{
-    owner.selectionChanged (lastRowSelected);
-}
-
-void PresetPanel::ListModel::listBoxItemClicked (int row, const juce::MouseEvent& e)
-{
-    if (e.mods.isPopupMenu()) owner.showRowMenu (row);
-}
-
-void PresetPanel::ListModel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&)
-{
-    // The single click that opened this double-click already selected the row, so `doLoad` is
-    // acting on the one under the pointer. Guarded rather than assumed, because loading the wrong
-    // preset is exactly the mistake this panel's separate Load exists to make impossible.
-    if (row == owner.selectedRow) owner.doLoad();
-}
-
-void PresetPanel::ListModel::returnKeyPressed (int lastRowSelected)
-{
-    // Only called with a row selected (see juce::ListBoxModel), and the selection is already there.
-    if (lastRowSelected == owner.selectedRow) owner.doLoad();
-}
-
-// ── PresetPanel ──────────────────────────────────────────────────────────────
+// ── construction ────────────────────────────────────────────────────────────
 
 PresetPanel::PresetPanel (PresetHost& h, PresetFormat f)
-    : host (h), format (std::move (f)), library (format)
+    : host (h), format (std::move (f)), library (format), palette (PanelPalette::from ({})),
+      popover (format.extension)
 {
-    extensionLabel.setText (format.extension, juce::dontSendNotification);
+    setLookAndFeel (&lookAndFeel);
+    setWantsKeyboardFocus (false);
 
-    searchBox.setTextToShowWhenEmpty ("filter...", colours.textDim);
+    // ── folder bar ──
+    folderButton.setButtonText ("folder" + ellipsis);
+    folderButton.setTooltip ("point the library at a different folder -- nothing is moved");
+    folderButton.onClick = [this] { choosePresetFolder(); };
+    migrateButton.setButtonText ("migrate" + ellipsis);
+    migrateButton.setTooltip ("move your presets to a new folder, then point the library at it");
+    migrateButton.onClick = [this] { openMigrate(); };
+    for (auto* b : { &folderButton, &migrateButton })
+    {
+        setButtonStyle (*b, ButtonStyle::plain);
+        addAndMakeVisible (*b);
+    }
+    folderLabel.setName ("preset folder");
+    folderLabel.setMinimumHorizontalScale (1.0f);
+    addAndMakeVisible (folderLabel);
+
+    // ── filter bar ──
+    searchBox.setName ("preset filter");
+    searchBox.setTextToShowWhenEmpty ("filter name, author, comment" + ellipsis, palette.textFaint);
     searchBox.onTextChange = [this] { applyFilterAndRefreshList(); };
+    searchBox.onEscapeKey = [this] { searchBox.clear(); applyFilterAndRefreshList(); list.grabKeyboardFocus(); };
+    searchBox.onReturnKey = [this] { list.grabKeyboardFocus(); };
     addAndMakeVisible (searchBox);
 
-    tagFilterBox.onChange = [this] { applyFilterAndRefreshList(); };
-    addAndMakeVisible (tagFilterBox);
-
-    refreshButton.onClick = [this] { rescanAndRefreshList(); };
-    addAndMakeVisible (refreshButton);
-
-    builtInToggle.setToggleState (true, juce::dontSendNotification);
-    userToggle.setToggleState (true, juce::dontSendNotification);
     for (auto* t : { &builtInToggle, &userToggle })
     {
+        setButtonStyle (*t, ButtonStyle::segment);
+        t->setClickingTogglesState (true);
+        t->setToggleState (true, juce::dontSendNotification);
         t->onClick = [this] { applyFilterAndRefreshList(); };
         // Made visible only once a scan has found built-ins -- see applyFilterAndRefreshList.
         addChildComponent (*t);
     }
+    builtInToggle.setTooltip ("show the presets that ship with the plugin");
+    userToggle.setTooltip ("show the presets in your folder");
 
-    loadButton.setTooltip ("load the selected preset -- selecting a row only shows it, so browsing "
-                           "the list never touches what you are working on. Double-click a row, or "
-                           "press Return, to do the same thing.");
-    loadButton.onClick = [this] { doLoad(); };
-    addAndMakeVisible (loadButton);
+    sortBox.setName ("preset sort");
+    sortBox.addItem ("name", byName);
+    sortBox.addItem ("date modified", byDate);
+    sortBox.addItem ("author", byAuthor);
+    sortBox.addItem ("first tag", byTag);
+    sortBox.addItem ("favourites first", byFavourite);
+    sortBox.addItem ("factory / mine", bySource);
+    sortBox.setSelectedId (byName, juce::dontSendNotification);
+    sortBox.setTooltip ("sort the list");
+    sortBox.onChange = [this]
+    {
+        const int id = sortBox.getSelectedId();
+        sortKey = sortKeyFor (id);
+        // Newest first and favourites on top are what those two sorts are for.
+        sortAscending = ! (id == byDate || id == byFavourite);
+        applyFilterAndRefreshList();
+    };
+    addAndMakeVisible (sortBox);
 
-    auditionButton.onClick = [this] { toggleAudition(); };
-    addChildComponent (auditionButton);   // shown by setAuditioner
+    setButtonStyle (sortDirectionButton, ButtonStyle::quiet);
+    sortDirectionButton.onClick = [this]
+    {
+        sortAscending = ! sortAscending;
+        applyFilterAndRefreshList();
+    };
+    addAndMakeVisible (sortDirectionButton);
 
-    list.setModel (&listModel);
-    list.setRowHeight (30);
+    setButtonStyle (refreshButton, ButtonStyle::plain);
+    refreshButton.setTooltip ("re-read the preset folder");
+    refreshButton.onClick = [this]
+    {
+        rescanAndRefreshList();
+        setStatus ("rescanned " + middot + " " + plural ((int) library.getAll().size(), "preset"));
+    };
+    addAndMakeVisible (refreshButton);
+
+    // ── tags ──
+    activeFilterBar.onRemoveTag = [this] (const juce::String& t) { rowTagClicked (t); };
+    activeFilterBar.onToggleMode = [this]
+    {
+        filter.matchAnyTag = ! filter.matchAnyTag;
+        refreshTagViews();
+        applyFilterAndRefreshList();
+    };
+    activeFilterBar.onClear = [this]
+    {
+        activeTags.clear();
+        refreshTagViews();
+        applyFilterAndRefreshList();
+    };
+    addChildComponent (activeFilterBar);
+
+    tagRail.onTagClicked = [this] (const juce::String& t) { rowTagClicked (t); };
+    tagRail.onPresetDropped = [this] (const juce::String& tag, const juce::String& key) { assignTag (tag, key); };
+    addAndMakeVisible (tagRail);
+
+    // ── live strip, list, popover ──
+    liveStrip.onEdit = [this] { openEditorForLive(); };
+    liveStrip.onSave = [this] { doSave(); };
+    liveStrip.onRevert = [this] { doRevert(); };
+    addAndMakeVisible (liveStrip);
+
+    list.setModel (this);
+    list.setPopover (&popover, [this] (int w) { return popover.getHeightForWidth (w); });
     addAndMakeVisible (list);
 
-    statusLabel.setFont (juce::FontOptions (10.5f));
+    popover.onApply = [this] { applyEditor(); };
+    popover.onCancel = [this] { closeEditor(); };
+    popover.onLayoutChanged = [this] { list.relayout(); };
+
+    // ── status bar ──
+    statusLabel.setName ("preset status");
+    statusLabel.setMinimumHorizontalScale (1.0f);
     addAndMakeVisible (statusLabel);
-
-    folderButton.setTooltip ("where presets are saved and listed");
-    folderButton.onClick = [this] { choosePresetFolder(); };
-    addAndMakeVisible (folderButton);
-
-    folderLabel.setFont (juce::FontOptions (10.0f));
-    addAndMakeVisible (folderLabel);
-
-    for (auto* l : { &nameLabel, &authorLabel, &commentLabel, &descriptionLabel, &tagsLabel,
-                     &dateLabel, &extensionLabel })
-        addAndMakeVisible (*l);
-    for (auto* e : { &nameEditor, &authorEditor, &commentEditor, &descriptionEditor, &tagsEditor })
-        addAndMakeVisible (*e);
-
-    // Named so anything asking "which component has the keyboard focus?" -- an accessibility
-    // client, a focus log -- gets an answer better than "a juce::TextEditor".
-    searchBox.setName ("preset filter");
-    nameEditor.setName ("preset name");
-    authorEditor.setName ("preset author");
-    commentEditor.setName ("preset comment");
-    descriptionEditor.setName ("preset description");
-    tagsEditor.setName ("preset tags");
-
-    nameEditor.setTooltip ("the file's name -- editing it renames the preset. Save is off while "
-                           "this does not match the open file; Save As writes the new name.");
-    // Editing the name is what turns Save off, so the button has to follow every keystroke.
-    nameEditor.onTextChange = [this] { updateEnablement(); };
-    nameEditor.onReturnKey = [this] { doRename(); };
-    extensionLabel.setTooltip ("every preset is a " + format.extension + " file");
-
-    commentEditor.setTooltip ("a note to yourself that a filename cannot carry -- \"this is the "
-                              "newer one\". Shown in the list, never part of the name.");
-    descriptionEditor.setMultiLine (true, true);
-    descriptionEditor.setReturnKeyStartsNewLine (true);
-
-    newButton.setTooltip ("start from an empty preset: the live document is cleared and no file "
-                          "is open, so Save As is how it gets a name");
+    newButton.setTooltip ("start from an empty patch: nothing is open afterwards, so save writes a "
+                          "new file");
     newButton.onClick = [this] { doNew(); };
-    addAndMakeVisible (newButton);
-    saveButton.onClick = [this] { doSave(); };
-    addAndMakeVisible (saveButton);
+    saveAsButton.setTooltip ("write the live patch to a new file in your folder");
     saveAsButton.onClick = [this] { doSaveAs(); };
-    addAndMakeVisible (saveAsButton);
-    renameButton.onClick = [this] { doRename(); };
-    addAndMakeVisible (renameButton);
-    deleteButton.onClick = [this] { doDelete(); };
-    addAndMakeVisible (deleteButton);
+    for (auto* b : { &newButton, &saveAsButton })
+    {
+        setButtonStyle (*b, ButtonStyle::plain);
+        addAndMakeVisible (*b);
+    }
 
     applyColours();
     rescanAndRefreshList();
-    updateDetailsFromSelection();
-    updateEnablement();
     refreshFolderLabel();
+    setStatus (plural ((int) library.getAll().size(), "preset"));
+
+    // The host's dirty flag has no change notification of its own; asking is a virtual call.
+    startTimer (300);
 }
 
 PresetPanel::~PresetPanel()
 {
+    stopTimer();
     stopAuditionIfRunning();
+    modal.reset();
+    retiredModal.reset();
+    popover.setHeader (nullptr, 0);
+    if (extras.extraFilters != nullptr) removeChildComponent (extras.extraFilters);
+    setLookAndFeel (nullptr);
+}
+
+// ── public ──────────────────────────────────────────────────────────────────
+
+void PresetPanel::refresh()
+{
+    applyFilterAndRefreshList();
+    refreshFolderLabel();   // the folder can be changed from here, but it is also a plugin setting
+}
+
+void PresetPanel::rescan() { rescanAndRefreshList(); }
+void PresetPanel::refilter() { applyFilterAndRefreshList(); }
+void PresetPanel::refreshLiveState() { refreshLiveStrip(); }
+
+void PresetPanel::setBuiltIns (std::vector<BuiltInPreset> builtIns)
+{
+    library.setBuiltIns (std::move (builtIns));
+    rescanAndRefreshList();
+}
+
+void PresetPanel::setColours (PresetPanelColours c)
+{
+    palette = PanelPalette::from (c);
+    applyColours();
+    repaint();
+}
+
+void PresetPanel::setOptions (PresetPanelOptions o)
+{
+    options = o;
+    tagRail.setVisible (options.showTagRail);
+    resized();
+    applyFilterAndRefreshList();
 }
 
 void PresetPanel::setExtras (PresetPanelExtras e)
 {
-    if (extras.detailsHeader != nullptr) removeChildComponent (extras.detailsHeader);
-    if (extras.extraFilters != nullptr)  removeChildComponent (extras.extraFilters);
-
+    if (extras.extraFilters != nullptr) removeChildComponent (extras.extraFilters);
     extras = std::move (e);
+    if (extras.extraFilters != nullptr) addAndMakeVisible (*extras.extraFilters);
 
-    if (extras.detailsHeader != nullptr) addAndMakeVisible (*extras.detailsHeader);
-    if (extras.extraFilters != nullptr)  addAndMakeVisible (*extras.extraFilters);
+    // The header lives in the popover, and only while it is open for a row -- see openEditorForRow.
+    if (editTarget != EditTarget::none)
+        popover.setHeader (extras.detailsHeader, extras.detailsHeaderHeight);
 
     resized();
     applyFilterAndRefreshList();
@@ -193,82 +240,186 @@ void PresetPanel::setAuditioner (PresetAuditioner* a)
         auditioner->stopAudition();
 
     auditioner = a;
-    auditionButton.setVisible (auditioner != nullptr);
-    updateEnablement();
-    resized();
+    list.relayout();
 }
 
-void PresetPanel::refilter()
+void PresetPanel::setFavourites (const juce::StringArray& f)
 {
+    favourites = f;
     applyFilterAndRefreshList();
 }
 
-void PresetPanel::rescan()
-{
-    rescanAndRefreshList();
-}
-
-void PresetPanel::setBuiltIns (std::vector<BuiltInPreset> builtIns)
-{
-    library.setBuiltIns (std::move (builtIns));
-    rescanAndRefreshList();
-}
-
-void PresetPanel::stopAuditionIfRunning()
-{
-    if (auditioner != nullptr)
-        auditioner->stopAudition();
-}
-
-void PresetPanel::toggleAudition()
-{
-    if (auditioner == nullptr || ! haveSelection) return;
-    // One button for both: the plugin owns the "is it playing" state, and asking it to stop
-    // something already stopped is defined to be harmless.
-    auditioner->stopAudition();
-    if (auditioner->canAudition (selectedCopy))
-        auditioner->startAudition (selectedCopy);
-}
-
-bool PresetPanel::selectionIsWritable() const
-{
-    return haveSelection && ! selectedCopy.isBuiltIn;
-}
-
-void PresetPanel::setColours (PresetPanelColours c)
-{
-    colours = c;
-    applyColours();
-    repaint();
-}
+// ── colours and layout ──────────────────────────────────────────────────────
 
 void PresetPanel::applyColours()
 {
-    for (auto* e : { &searchBox, &nameEditor, &authorEditor, &commentEditor, &descriptionEditor,
-                     &tagsEditor })
+    lookAndFeel.setPalette (palette);
+
+    styleEditor (searchBox, palette, 12.5f);
+    searchBox.setTextToShowWhenEmpty ("filter name, author, comment" + ellipsis, palette.textFaint);
+
+    folderLabel.setFont (PanelFonts::mono (11.5f));
+    folderLabel.setColour (juce::Label::textColourId, palette.base.textDim);
+    statusLabel.setFont (PanelFonts::mono (11.0f));
+    statusLabel.setColour (juce::Label::textColourId, palette.base.textDim);
+
+    for (auto* c : std::initializer_list<juce::Component*> { &tagRail, &activeFilterBar, &liveStrip, &list, &popover })
+        c->sendLookAndFeelChange();
+    tagRail.setPalette (palette);
+    activeFilterBar.setPalette (palette);
+    liveStrip.setPalette (palette);
+    list.setPalette (palette);
+    popover.setPalette (palette);
+    if (modal != nullptr) modal->repaint();
+    sendLookAndFeelChange();
+}
+
+void PresetPanel::paint (juce::Graphics& g)
+{
+    g.fillAll (palette.base.background);
+
+    g.setColour (palette.bar);
+    g.fillRect (folderBarArea);
+    g.fillRect (statusBarArea);
+    g.setColour (palette.divider);
+    g.fillRect (folderBarArea.getX(), folderBarArea.getBottom() - 1, folderBarArea.getWidth(), 1);
+    g.fillRect (filterBarArea.getX(), filterBarArea.getBottom() - 1, filterBarArea.getWidth(), 1);
+    if (! extraFiltersArea.isEmpty())
+        g.fillRect (extraFiltersArea.getX(), extraFiltersArea.getBottom() - 1, extraFiltersArea.getWidth(), 1);
+    g.fillRect (statusBarArea.getX(), statusBarArea.getY(), statusBarArea.getWidth(), 1);
+
     {
-        e->setColour (juce::TextEditor::backgroundColourId, colours.panel);
-        e->setColour (juce::TextEditor::textColourId, colours.text);
-        e->setColour (juce::TextEditor::outlineColourId, colours.outline);
-        e->setFont (juce::FontOptions (12.0f));
+        const auto f = PanelFonts::caps (11.0f);
+        g.setFont (f);
+        g.setColour (palette.base.textDim);
+        g.drawText ("PRESETS", folderBarArea.withTrimmedLeft (12).withTrimmedBottom (1),
+                    juce::Justification::centredLeft, false);
     }
 
-    for (auto* l : { &nameLabel, &extensionLabel, &authorLabel, &commentLabel, &descriptionLabel,
-                     &tagsLabel, &dateLabel, &statusLabel, &folderLabel })
+    // The sort box and its direction toggle read as one control; so do the two source toggles.
+    auto outline = [&g, this] (juce::Rectangle<int> r, bool fill)
     {
-        l->setColour (juce::Label::textColourId, colours.textDim);
-        if (l != &statusLabel && l != &folderLabel) l->setFont (juce::FontOptions (10.5f));
+        if (r.isEmpty()) return;
+        if (fill)
+        {
+            g.setColour (palette.button);
+            g.fillRoundedRectangle (r.toFloat(), 3.0f);
+        }
+        g.setColour (palette.base.outline);
+        g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 3.0f, 1.0f);
+    };
+    outline (sortArea, true);
+    g.setColour (palette.base.outline);
+    g.fillRect (sortDirectionButton.getX(), sortArea.getY(), 1, sortArea.getHeight());
+    if (builtInToggle.isVisible())
+    {
+        outline (sourceArea, false);
+        g.setColour (palette.base.outline);
+        g.fillRect (userToggle.getX(), sourceArea.getY() + 1, 1, sourceArea.getHeight() - 2);
+    }
+}
+
+void PresetPanel::resized()
+{
+    auto b = getLocalBounds();
+    const auto buttonFont = PanelFonts::sans (12.0f);
+    auto widthOf = [&buttonFont] (juce::Button& btn, int pad)
+    {
+        return (int) std::ceil (PanelFonts::width (buttonFont, btn.getButtonText())) + pad;
+    };
+
+    // ── folder bar ──
+    folderBarArea = b.removeFromTop (42);
+    {
+        auto r = folderBarArea.withTrimmedBottom (1).reduced (12, 8);
+        migrateButton.setBounds (r.removeFromRight (widthOf (migrateButton, 22)));
+        r.removeFromRight (8);
+        folderButton.setBounds (r.removeFromRight (widthOf (folderButton, 22)));
+        r.removeFromRight (10);
+        r.removeFromLeft ((int) std::ceil (PanelFonts::width (PanelFonts::caps (11.0f), "PRESETS")) + 12);
+        folderLabel.setBounds (r);
     }
 
-    for (auto* t : { &builtInToggle, &userToggle })
+    // ── filter bar ──
+    filterBarArea = b.removeFromTop (46);
     {
-        t->setColour (juce::ToggleButton::textColourId, colours.textDim);
-        t->setColour (juce::ToggleButton::tickColourId, colours.accent);
-        t->setColour (juce::ToggleButton::tickDisabledColourId, colours.outline);
+        auto r = filterBarArea.withTrimmedBottom (1).reduced (12, 8);
+        refreshButton.setBounds (r.removeFromRight (widthOf (refreshButton, 22)));
+        r.removeFromRight (8);
+
+        sortArea = r.removeFromRight (190);
+        {
+            auto s = sortArea;
+            sortDirectionButton.setBounds (s.removeFromRight (58));
+            sortBox.setBounds (s.reduced (1));
+        }
+        r.removeFromRight (8);
+
+        sourceArea = {};
+        if (builtInToggle.isVisible())
+        {
+            sourceArea = r.removeFromRight (widthOf (builtInToggle, 22) + widthOf (userToggle, 22));
+            auto s = sourceArea.reduced (1);
+            builtInToggle.setBounds (s.removeFromLeft (widthOf (builtInToggle, 22)));
+            userToggle.setBounds (s);
+            r.removeFromRight (8);
+        }
+        searchBox.setBounds (r);
     }
 
-    searchBox.setTextToShowWhenEmpty ("filter...", colours.textDim);
-    list.setColour (juce::ListBox::backgroundColourId, colours.background);
+    extraFiltersArea = {};
+    if (extras.extraFilters != nullptr && extras.extraFiltersHeight > 0)
+    {
+        extraFiltersArea = b.removeFromTop (extras.extraFiltersHeight + 9);
+        extras.extraFilters->setBounds (extraFiltersArea.withTrimmedBottom (1).reduced (12, 4));
+    }
+
+    if (activeFilterBar.isVisible())
+        activeFilterBar.setBounds (b.removeFromTop (ActiveFilterBar::height));
+
+    // ── status bar ──
+    statusBarArea = b.removeFromBottom (42);
+    {
+        auto r = statusBarArea.withTrimmedTop (1).reduced (12, 7);
+        saveAsButton.setBounds (r.removeFromRight (widthOf (saveAsButton, 22)));
+        r.removeFromRight (8);
+        newButton.setBounds (r.removeFromRight (widthOf (newButton, 22)));
+        r.removeFromRight (10);
+        statusLabel.setBounds (r.withTrimmedLeft (-4));
+    }
+
+    // ── rail and list ──
+    if (options.showTagRail)
+        tagRail.setBounds (b.removeFromLeft (TagRail::width));
+    liveStrip.setBounds (b.removeFromTop (LiveStrip::height));
+    list.setBounds (b);
+
+    if (modal != nullptr) modal->setBounds (getLocalBounds());
+}
+
+bool PresetPanel::keyPressed (const juce::KeyPress& k)
+{
+    // What reaches here is what no field or list claimed: `/` is only a filter shortcut when
+    // nothing that types has the keyboard.
+    if (k.getTextCharacter() == '/')
+    {
+        searchBox.grabKeyboardFocus();
+        return true;
+    }
+    if (k == juce::KeyPress::escapeKey && editTarget != EditTarget::none)
+    {
+        closeEditor();
+        return true;
+    }
+    return false;
+}
+
+// ── status ──────────────────────────────────────────────────────────────────
+
+void PresetPanel::setStatus (const juce::String& s)
+{
+    status = s;
+    statusLabel.setText (s, juce::dontSendNotification);
 }
 
 void PresetPanel::refreshFolderLabel()
@@ -278,9 +429,840 @@ void PresetPanel::refreshFolderLabel()
     folderLabel.setTooltip (folder.getFullPathName());
 }
 
+void PresetPanel::timerCallback()
+{
+    if (! isShowing()) return;
+    if (isDirty() != lastDirty) refreshLiveStrip();
+}
+
+// ── scanning and filtering ──────────────────────────────────────────────────
+
+void PresetPanel::rescanAndRefreshList()
+{
+    library.setPresetDir (host.presetFolder());
+    library.rescan();
+    refreshTagViews();
+    applyFilterAndRefreshList();
+}
+
+void PresetPanel::refreshTagViews()
+{
+    // A tag that no preset carries any more cannot filter anything but to nothing.
+    const auto counts = library.getTagCounts();
+    for (int i = activeTags.size(); --i >= 0;)
+    {
+        bool exists = false;
+        for (const auto& c : counts)
+            if (c.tag == activeTags[i]) { exists = true; break; }
+        if (! exists) activeTags.remove (i);
+    }
+
+    tagRail.setTags (counts, activeTags);
+    tagRail.setVisible (options.showTagRail);
+
+    const bool showBar = ! activeTags.isEmpty();
+    activeFilterBar.setTags (activeTags, filter.matchAnyTag);
+    if (showBar != activeFilterBar.isVisible())
+    {
+        activeFilterBar.setVisible (showBar);
+        resized();
+    }
+}
+
+void PresetPanel::applyFilterAndRefreshList()
+{
+    filter.text = searchBox.getText().trim();
+    filter.requiredTags = activeTags;
+
+    // The two source toggles only earn their space in a plugin that ships built-ins.
+    bool anyBuiltIn = false;
+    for (const auto& e : library.getAll())
+        if (e.isBuiltIn) { anyBuiltIn = true; break; }
+    if (builtInToggle.isVisible() != anyBuiltIn)
+    {
+        builtInToggle.setVisible (anyBuiltIn);
+        userToggle.setVisible (anyBuiltIn);
+        resized();
+        repaint();
+    }
+
+    filter.includeBuiltIn = ! anyBuiltIn || builtInToggle.getToggleState();
+    filter.includeUser    = ! anyBuiltIn || userToggle.getToggleState();
+    filter.extraPredicate = extras.extraFilterPredicate;
+
+    rows = library.getFiltered (filter);
+    sortPresets (rows, sortKey, sortAscending,
+                 [this] (const PresetEntry& e) { return favourites.contains (favouriteKey (e)); });
+
+    sortDirectionButton.setButtonText (sortAscending ? juce::String (juce::CharPointer_UTF8 ("\xe2\x86\x91 A\xe2\x80\x93Z"))
+                                                     : juce::String (juce::CharPointer_UTF8 ("\xe2\x86\x93 Z\xe2\x80\x93" "A")));
+    sortDirectionButton.setTooltip (sortAscending ? "ascending " + emDash + " click for descending"
+                                                  : "descending " + emDash + " click for ascending");
+
+    list.updateContent();
+
+    // The selection follows its preset, not its index: a rescan or a re-sort moves rows about.
+    const int selected = rowIndexOf (selectedKey);
+    if (selected < 0 && selectedKey.isNotEmpty())
+    {
+        selectedKey = {};
+        stopAuditionIfRunning();
+        if (onSelectionChanged) onSelectionChanged (nullptr);
+    }
+    list.selectRow (selected, false);
+
+    // So does the popover.
+    if (editTarget == EditTarget::row)
+    {
+        const int row = rowIndexOf (editKey);
+        if (row < 0) closeEditor();
+        else         list.showPopoverForRow (row);
+    }
+    else if (editTarget == EditTarget::live || editTarget == EditTarget::saveAs)
+    {
+        list.showPopoverForLive();
+    }
+
+    refreshLiveStrip();
+}
+
+const PresetEntry* PresetPanel::findEntry (const juce::String& key) const
+{
+    if (key.isEmpty()) return nullptr;
+    for (const auto& e : library.getAll())
+        if (e.key() == key) return &e;
+    return nullptr;
+}
+
+int PresetPanel::rowIndexOf (const juce::String& key) const
+{
+    if (key.isEmpty()) return -1;
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (rows[i]->key() == key) return (int) i;
+    return -1;
+}
+
+void PresetPanel::selectKey (const juce::String& key)
+{
+    selectedKey = key;
+    const int row = rowIndexOf (key);
+    list.selectRow (row, false);
+    if (onSelectionChanged) onSelectionChanged (row >= 0 ? rows[(size_t) row] : nullptr);
+}
+
+juce::String PresetPanel::favouriteKey (const PresetEntry& e) const
+{
+    // Relative to the preset folder, so a favourite survives the folder being migrated.
+    if (e.isBuiltIn) return e.key();
+    const auto dir = library.getPresetDir();
+    return "file:" + (e.file.isAChildOf (dir) ? e.file.getRelativePathFrom (dir).replaceCharacter ('\\', '/')
+                                              : e.file.getFullPathName());
+}
+
+const PresetEntry* PresetPanel::openEntry() const { return findEntry (currentKey); }
+
+// ── list model ──────────────────────────────────────────────────────────────
+
+const PresetEntry* PresetPanel::getRow (int row)
+{
+    return juce::isPositiveAndBelow (row, (int) rows.size()) ? rows[(size_t) row] : nullptr;
+}
+
+bool PresetPanel::isRowOpen (const PresetEntry& e)
+{
+    // By key, not by file: a built-in has no file, so comparing files would mark every built-in
+    // as the open one whenever nothing is open.
+    return currentKey.isNotEmpty() && e.key() == currentKey;
+}
+
+bool PresetPanel::isRowFavourite (const PresetEntry& e) { return favourites.contains (favouriteKey (e)); }
+bool PresetPanel::isTagFiltering (const juce::String& t) { return activeTags.contains (t); }
+
+bool PresetPanel::canAudition (const PresetEntry& e)
+{
+    return auditioner != nullptr && auditioner->canAudition (e);
+}
+
+void PresetPanel::rowSelected (int row)
+{
+    // Whatever was previewing was previewing the row being left.
+    stopAuditionIfRunning();
+
+    const auto* e = getRow (row);
+    selectedKey = e != nullptr ? e->key() : juce::String();
+
+    if (editTarget == EditTarget::row && editKey != selectedKey)
+        closeEditor();
+
+    if (onSelectionChanged) onSelectionChanged (e);
+}
+
+void PresetPanel::rowLoadRequested (int row)
+{
+    if (const auto* e = getRow (row)) requestLoad (*e);
+}
+
+void PresetPanel::rowEditRequested (int row) { openEditorForRow (row); }
+
+void PresetPanel::rowDuplicateRequested (int row)
+{
+    const auto* e = getRow (row);
+    if (e == nullptr) return;
+    const auto entry = *e;   // the library rescans under it
+
+    juce::File copy;
+    juce::String err;
+    if (! library.duplicatePreset (entry, copy, err))
+    {
+        showError (err);
+        return;
+    }
+
+    selectedKey = copy.getFullPathName();
+    rescanAndRefreshList();
+    setStatus ("duplicated as " + quoted (copy.getFileNameWithoutExtension()));
+}
+
+void PresetPanel::rowDeleteRequested (int row)
+{
+    const auto* e = getRow (row);
+    if (e == nullptr) return;
+    const auto entry = *e;
+
+    if (entry.isBuiltIn)
+    {
+        setStatus ("factory presets cannot be deleted");
+        return;
+    }
+
+    if (! options.confirmDelete)
+    {
+        deleteNow (entry);
+        return;
+    }
+
+    auto& m = showModal (440);
+    m.setTitle ("Delete " + quoted (displayName (entry)) + "?");
+    m.addText ("Moved to the system trash, not erased.");
+    m.addButton ("delete", ButtonStyle::destructive, [this, entry]
+    {
+        const auto target = entry;   // this lambda goes with the modal
+        closeModal();
+        deleteNow (target);
+    });
+    m.addCancel ("cancel", [this] { closeModal(); });
+    finishModal();
+}
+
+void PresetPanel::deleteNow (PresetEntry entry)
+{
+    juce::String err;
+    const auto favourite = favouriteKey (entry);
+    if (! library.deletePreset (entry, err))
+    {
+        showError (err);
+        return;
+    }
+
+    if (entry.key() == currentKey)
+    {
+        // Its on-disk identity is gone, but the live patch is not: it keeps the name, so the
+        // strip still says what it is and the next save writes it back.
+        pendingLiveMeta = liveMetadata();
+        currentFile = juce::File();
+        currentKey = {};
+    }
+    if (editKey == entry.key()) closeEditor();
+    if (favourites.contains (favourite))
+    {
+        favourites.removeString (favourite);
+        if (onFavouritesChanged) onFavouritesChanged();
+    }
+
+    rescanAndRefreshList();
+    setStatus (juce::String ("deleted ") + emDash + " moved to trash");
+}
+
+void PresetPanel::rowAuditionRequested (int row)
+{
+    const auto* e = getRow (row);
+    if (auditioner == nullptr || e == nullptr) return;
+    // One button for both: the plugin owns the "is it playing" state, and asking it to stop
+    // something already stopped is defined to be harmless.
+    auditioner->stopAudition();
+    if (auditioner->canAudition (*e))
+        auditioner->startAudition (*e);
+}
+
+void PresetPanel::rowRevealRequested (int row)
+{
+    if (const auto* e = getRow (row); e != nullptr && ! e->isBuiltIn)
+        e->file.revealToUser();
+}
+
+void PresetPanel::rowFavouriteToggled (int row)
+{
+    const auto* e = getRow (row);
+    if (e == nullptr) return;
+
+    const auto key = favouriteKey (*e);
+    if (favourites.contains (key)) favourites.removeString (key);
+    else                           favourites.add (key);
+
+    if (sortKey == PresetSortKey::favouritesFirst) applyFilterAndRefreshList();
+    else                                           list.repaint();
+    if (onFavouritesChanged) onFavouritesChanged();
+}
+
+void PresetPanel::rowTagClicked (const juce::String& tag)
+{
+    if (activeTags.contains (tag)) activeTags.removeString (tag);
+    else                           activeTags.add (tag);
+    refreshTagViews();
+    applyFilterAndRefreshList();
+}
+
+void PresetPanel::rowDragStarted (int row)
+{
+    list.setDraggingRow (row);
+}
+
+void PresetPanel::dragOperationEnded (const juce::DragAndDropTarget::SourceDetails&)
+{
+    list.setDraggingRow (-1);
+}
+
+void PresetPanel::escapePressed()
+{
+    if (editTarget != EditTarget::none) closeEditor();
+}
+
+void PresetPanel::stopAuditionIfRunning()
+{
+    if (auditioner != nullptr)
+        auditioner->stopAudition();
+}
+
+// ── tags ────────────────────────────────────────────────────────────────────
+
+void PresetPanel::assignTag (const juce::String& tag, const juce::String& key)
+{
+    list.setDraggingRow (-1);
+    const auto* found = findEntry (key);
+    if (found == nullptr) return;
+    auto entry = *found;
+    const auto name = displayName (entry);
+
+    if (entry.isBuiltIn)
+    {
+        setStatus (quoted (name) + " is a factory preset " + emDash + " duplicate it to tag it");
+        return;
+    }
+    if (entry.meta.tags.contains (tag))
+    {
+        setStatus (quoted (name) + " already tagged " + tag);
+        return;
+    }
+
+    auto meta = entry.meta;
+    meta.name = name;   // a tag is not a rename
+    meta.tags.add (tag);
+
+    juce::String err;
+    if (! library.renamePreset (entry, meta, err))
+    {
+        showError (err);
+        return;
+    }
+    if (entry.key() == currentKey) pendingLiveMeta = entry.meta;
+
+    rescanAndRefreshList();
+    setStatus ("tagged " + quoted (name) + " as " + tag);
+}
+
+// ── the live patch ──────────────────────────────────────────────────────────
+
+PresetMetadata PresetPanel::liveMetadata() const
+{
+    PresetMetadata m;
+    if (const auto* e = openEntry(); e != nullptr)
+    {
+        m = e->meta;
+        m.name = displayName (*e);
+    }
+    else
+    {
+        m = pendingLiveMeta;
+    }
+
+    if (m.name.isEmpty() || m.author.isEmpty())
+    {
+        const auto doc = host.captureDocument();
+        if (m.name.isEmpty())   m.name = doc.getProperty (format.nameProperty, "").toString();
+        if (m.author.isEmpty()) m.author = doc.getProperty (format.authorProperty, "").toString();
+    }
+    return m;
+}
+
+juce::String PresetPanel::liveName() const
+{
+    if (currentKey.isNotEmpty())
+        return liveMetadata().name;
+    // A new patch has no name until it is given one; the strip says so rather than inventing one.
+    return pendingLiveMeta.name;
+}
+
+void PresetPanel::refreshLiveStrip()
+{
+    LiveStrip::State s;
+    s.name = liveName();
+
+    if (currentKey.isNotEmpty())
+    {
+        const auto m = liveMetadata();
+        juce::StringArray parts;
+        if (m.author.isNotEmpty()) parts.add (m.author);
+        if (m.date.isNotEmpty()) parts.add (m.date.substring (0, 10));
+        s.meta = parts.joinIntoString ("  " + middot + "  ");
+    }
+
+    s.dirty = isDirty();
+    lastDirty = s.dirty;
+
+    // A patch with no file of its own can always be saved -- that is how it gets one. A patch
+    // with a file is saved only when there is something to save.
+    s.canSave = ! liveHasFile() || s.dirty;
+    s.saveIsAccent = s.canSave && s.dirty;
+    s.canRevert = s.dirty && openEntry() != nullptr;
+    liveStrip.setState (s);
+
+    liveStrip.saveButton.setTooltip (liveHasFile()
+        ? "write the live patch back to " + currentFile.getFileName()
+        : "write the live patch into your folder as "
+              + quoted (PresetFile::sanitiseFilename (liveMetadata().name) + format.extension));
+}
+
+// ── loading ─────────────────────────────────────────────────────────────────
+
+bool PresetPanel::loadNeedsConfirmation (const PresetEntry* target) const
+{
+    switch (options.loadGuard)
+    {
+        case PresetPanelOptions::LoadGuard::none:  return false;
+        case PresetPanelOptions::LoadGuard::dirty: return isDirty();
+        case PresetPanelOptions::LoadGuard::always:
+            // Reloading a clean open preset replaces nothing with anything different.
+            return ! (target != nullptr && target->key() == currentKey && ! isDirty());
+    }
+    return true;
+}
+
+void PresetPanel::requestLoad (const PresetEntry& target)
+{
+    if (! loadNeedsConfirmation (&target))
+    {
+        loadEntry (target);
+        return;
+    }
+
+    const auto entry = target;
+    const bool dirty = isDirty();
+    const auto live = liveName();
+
+    auto& m = showModal (460);
+    m.setTitle ("Load " + quoted (displayName (entry)) + "?");
+    if (! dirty)
+        m.addText ("Loading replaces the live patch.");
+    else if (live.isNotEmpty())
+        m.addText (quoted (live) + " has unsaved changes. Loading replaces the live patch and those "
+                   "edits are gone.");
+    else
+        m.addText ("The live patch has unsaved changes and has never been saved. Loading replaces it.");
+
+    // The one that loses nothing is the one that looks like the default.
+    m.addButton ("save, then load", ButtonStyle::accent, [this, entry]
+    {
+        const auto e = entry;
+        closeModal();
+        if (doSave()) loadEntry (e);
+    });
+    m.addButton ("load anyway", ButtonStyle::plain, [this, entry]
+    {
+        const auto e = entry;
+        closeModal();
+        loadEntry (e);
+    });
+    m.addCancel ("cancel", [this] { closeModal(); });
+    finishModal();
+}
+
+void PresetPanel::loadEntry (const PresetEntry& entryIn)
+{
+    const auto entry = entryIn;   // may point into the library, which a load's callbacks can rescan
+    const auto label = displayName (entry);
+
+    auto loaded = entry.isBuiltIn
+        ? PresetFile::loadFromData (entry.data, entry.dataSize, entry.meta.name, format)
+        : PresetFile::load (entry.file, format);
+
+    if (! loaded.has_value())
+    {
+        showError ("Could not load " + quoted (label) + " -- it may be corrupt.");
+        return;
+    }
+
+    stopAuditionIfRunning();
+    host.applyDocument (loaded->tree);
+    // A built-in has no file to write back to, so the open document has no on-disk identity and
+    // Save writes a new file -- which is exactly what editing a built-in should do.
+    currentFile = entry.file;
+    currentKey = entry.key();
+    pendingLiveMeta = loaded->meta;
+    host.documentLoaded (entry.file, loaded->meta);
+
+    if (editTarget == EditTarget::live || editTarget == EditTarget::saveAs) closeEditor();
+    setStatus ("loaded " + quoted (label));
+    list.relayout();   // the OPEN badge moved
+    refreshLiveStrip();
+}
+
+void PresetPanel::doRevert()
+{
+    const auto* e = openEntry();
+    if (e == nullptr)
+    {
+        setStatus ("nothing to revert");
+        return;
+    }
+    const auto entry = *e;
+    loadEntry (entry);
+    setStatus ("reverted " + quoted (displayName (entry)) + " to disk");
+}
+
+// ── writing ─────────────────────────────────────────────────────────────────
+
+bool PresetPanel::writeLiveTo (const juce::File& file, PresetMetadata meta)
+{
+    meta.date = juce::Time::getCurrentTime().toISO8601 (true);
+    // A save writes the *live* document, so its listable extras are the live one's.
+    meta.extra = host.captureExtraMetadata();
+
+    if (! PresetFile::save (file, host.captureDocument(), meta, format))
+    {
+        showError ("Could not write " + quoted (file.getFullPathName()) + ".");
+        return false;
+    }
+
+    auto saved = meta;
+    saved.name = file.getFileNameWithoutExtension();   // the file had the last word
+    host.documentSaved (file, saved);
+
+    currentFile = file;
+    currentKey = file.getFullPathName();
+    pendingLiveMeta = saved;
+    rescanAndRefreshList();
+    setStatus ("saved " + quoted (saved.name));
+    return true;
+}
+
+bool PresetPanel::doSave()
+{
+    auto meta = liveMetadata();
+
+    if (liveHasFile())
+        return writeLiveTo (currentFile, meta);
+
+    // No file of its own -- a new patch, or one loaded from a built-in. It gets one under its own
+    // name, and never by writing over a file it was not opened from.
+    auto folder = host.presetFolder();
+    folder.createDirectory();
+    const auto target = PresetFile::resolveCollision (folder, PresetFile::sanitiseFilename (meta.name), format);
+    return writeLiveTo (target, meta);
+}
+
+void PresetPanel::doSaveAs()
+{
+    if (editTarget == EditTarget::saveAs)
+    {
+        closeEditor();
+        return;
+    }
+
+    // Save as asks for the name where every other name is asked for: in the popover, under the
+    // live strip. The suggestion is the live name, moved on to the next free one.
+    auto meta = liveMetadata();
+    const auto folder = host.presetFolder();
+    meta.name = PresetFile::resolveCollision (folder, PresetFile::sanitiseFilename (meta.name), format)
+                    .getFileNameWithoutExtension();
+
+    editTarget = EditTarget::saveAs;
+    editKey = {};
+    popover.setHeader (nullptr, 0);
+    const auto name = liveName();
+    popover.open ("save live patch as", name.isNotEmpty() ? name : juce::String ("new patch"), meta,
+                  library.getAllTags(), PresetEditPopover::Mode::saveAs, true);
+    list.showPopoverForLive();
+    popover.focusName();
+}
+
+void PresetPanel::doNew()
+{
+    if (! loadNeedsConfirmation (nullptr))
+    {
+        newNow();
+        return;
+    }
+
+    // New throws the live patch away as surely as a load does, so it passes the same guard.
+    const auto live = liveName();
+    auto& m = showModal (460);
+    m.setTitle ("Start a new patch?");
+    if (! isDirty())
+        m.addText ("A new patch replaces the live one.");
+    else if (live.isNotEmpty())
+        m.addText (quoted (live) + " has unsaved changes. A new patch replaces it and those edits are gone.");
+    else
+        m.addText ("The live patch has unsaved changes and has never been saved. A new patch replaces it.");
+
+    m.addButton ("save, then new", ButtonStyle::accent, [this]
+    {
+        closeModal();
+        if (doSave()) newNow();
+    });
+    m.addButton ("new anyway", ButtonStyle::plain, [this]
+    {
+        closeModal();
+        newNow();
+    });
+    m.addCancel ("cancel", [this] { closeModal(); });
+    finishModal();
+}
+
+void PresetPanel::newNow()
+{
+    // Nothing is open afterwards, so nothing may be previewing either.
+    stopAuditionIfRunning();
+    host.newDocument();
+
+    currentFile = juce::File();
+    currentKey = {};
+    pendingLiveMeta = {};
+
+    if (editTarget == EditTarget::live || editTarget == EditTarget::saveAs) closeEditor();
+    setStatus ("new patch");
+    list.relayout();
+    refreshLiveStrip();
+}
+
+// ── popover ─────────────────────────────────────────────────────────────────
+
+void PresetPanel::openEditorForRow (int row)
+{
+    const auto* e = getRow (row);
+    if (e == nullptr) return;
+
+    if (selectedKey != e->key())
+    {
+        list.selectRow (row, false);
+        rowSelected (row);
+    }
+
+    editTarget = EditTarget::row;
+    editKey = e->key();
+
+    auto meta = e->meta;
+    meta.name = displayName (*e);
+    popover.setHeader (extras.detailsHeader, extras.detailsHeaderHeight);
+    popover.open ("editing", displayName (*e), meta, library.getAllTags(),
+                  e->isBuiltIn ? PresetEditPopover::Mode::factoryCopy : PresetEditPopover::Mode::edit,
+                  false);
+    list.showPopoverForRow (row);
+    popover.focusName();
+}
+
+void PresetPanel::openEditorForLive()
+{
+    if (editTarget == EditTarget::live)
+    {
+        closeEditor();
+        return;
+    }
+
+    const auto* open = openEntry();
+    const auto mode = open == nullptr ? PresetEditPopover::Mode::liveUnsaved
+                    : open->isBuiltIn ? PresetEditPopover::Mode::factoryCopy
+                                      : PresetEditPopover::Mode::edit;
+
+    editTarget = EditTarget::live;
+    editKey = currentKey;
+
+    const auto name = liveName();
+    popover.setHeader (nullptr, 0);
+    popover.open ("editing live patch", name.isNotEmpty() ? name : juce::String ("new patch"),
+                  liveMetadata(), library.getAllTags(), mode, true);
+    list.showPopoverForLive();
+    popover.focusName();
+}
+
+void PresetPanel::closeEditor()
+{
+    const bool wasOpen = editTarget != EditTarget::none;
+    editTarget = EditTarget::none;
+    editKey = {};
+    popover.setHeader (nullptr, 0);
+    list.hidePopover();
+    if (wasOpen && list.isShowing()) list.grabKeyboardFocus();
+}
+
+void PresetPanel::applyEditor()
+{
+    auto draft = popover.getDraft();
+
+    switch (editTarget)
+    {
+        case EditTarget::none:
+            return;
+
+        case EditTarget::row:
+        {
+            const auto* e = findEntry (editKey);
+            if (e == nullptr) { closeEditor(); return; }
+            applyToEntry (*e, draft);
+            return;
+        }
+
+        case EditTarget::saveAs:
+        {
+            auto folder = host.presetFolder();
+            folder.createDirectory();
+            const auto target = folder.getChildFile (PresetFile::sanitiseFilename (draft.name) + format.extension);
+
+            if (target.existsAsFile() && target != currentFile)
+            {
+                // Replacing a file is what a native save dialog's overwrite warning used to ask about.
+                auto& m = showModal (460);
+                m.setTitle ("Replace " + quoted (target.getFileNameWithoutExtension()) + "?");
+                m.addText (quoted (target.getFileName()) + " already exists in your folder. Replacing it "
+                           "writes the live patch over it.");
+                m.addButton ("replace", ButtonStyle::destructive, [this, target, draft]
+                {
+                    const auto t = target;
+                    const auto d = draft;
+                    closeModal();
+                    if (writeLiveTo (t, d)) closeEditor();
+                });
+                m.addCancel ("cancel", [this] { closeModal(); });
+                finishModal();
+                return;
+            }
+
+            if (writeLiveTo (target, draft)) closeEditor();
+            return;
+        }
+
+        case EditTarget::live:
+        {
+            const auto* open = openEntry();
+
+            if (open != nullptr && ! open->isBuiltIn)
+            {
+                applyToEntry (*open, draft);
+                return;
+            }
+
+            if (open != nullptr)
+            {
+                // The live patch came from a built-in, which cannot be written to: its editable
+                // copy is the live patch itself, saved into the folder under the new name.
+                auto folder = host.presetFolder();
+                folder.createDirectory();
+                const auto target = PresetFile::resolveCollision (
+                    folder, PresetFile::sanitiseFilename (draft.name), format);
+                if (writeLiveTo (target, draft))
+                {
+                    closeEditor();
+                    setStatus ("saved the live patch as " + quoted (target.getFileNameWithoutExtension()));
+                }
+                return;
+            }
+
+            // Never saved: this names it, and save writes it.
+            draft.name = PresetFile::sanitiseFilename (draft.name);
+            pendingLiveMeta = draft;
+            closeEditor();
+            refreshLiveStrip();
+            setStatus ("named the live patch " + quoted (draft.name) + " " + emDash + " save writes it");
+            return;
+        }
+    }
+}
+
+void PresetPanel::applyToEntry (PresetEntry entry, PresetMetadata draft)
+{
+    draft.name = PresetFile::sanitiseFilename (draft.name.isNotEmpty() ? draft.name : displayName (entry));
+    juce::String err;
+
+    if (entry.isBuiltIn)
+    {
+        // A built-in cannot be written to, so applying writes an editable copy rather than failing.
+        PresetEntry copy;
+        if (! library.writeEditableCopy (entry, draft, copy, err))
+        {
+            showError (err);
+            rescanAndRefreshList();
+            return;
+        }
+        closeEditor();
+        selectedKey = copy.key();
+        rescanAndRefreshList();
+        setStatus ("saved a copy of the factory preset as " + quoted (displayName (copy)));
+        return;
+    }
+
+    const auto oldFile = entry.file;
+    const auto oldFavourite = favouriteKey (entry);
+    const bool wasOpen = entry.key() == currentKey;
+    const bool wasSelected = entry.key() == selectedKey;
+
+    // An edit rewrites a file that may not be the open document -- so its extras stay the ones
+    // it was saved with rather than being restamped from the live document.
+    draft.extra = entry.meta.extra;
+
+    if (! library.renamePreset (entry, draft, err))
+    {
+        showError (err);
+        return;
+    }
+
+    const bool renamed = entry.file != oldFile;
+
+    // If this was the file the live document came from, keep it and this panel in step -- or the
+    // next plain save would write the old name straight back over the rename.
+    if (wasOpen)
+    {
+        currentFile = entry.file;
+        currentKey = entry.key();
+        pendingLiveMeta = entry.meta;
+        host.documentSaved (entry.file, entry.meta);
+    }
+    if (wasSelected) selectedKey = entry.key();
+    if (renamed && favourites.contains (oldFavourite))
+    {
+        favourites.set (favourites.indexOf (oldFavourite), favouriteKey (entry));
+        if (onFavouritesChanged) onFavouritesChanged();
+    }
+
+    closeEditor();
+    rescanAndRefreshList();
+    setStatus (renamed ? "renamed to " + quoted (entry.file.getFileNameWithoutExtension()) + " and wrote metadata"
+                       : "wrote metadata for " + quoted (entry.file.getFileNameWithoutExtension()));
+}
+
+// ── folder ──────────────────────────────────────────────────────────────────
+
 void PresetPanel::choosePresetFolder()
 {
-    folderChooser = std::make_unique<juce::FileChooser> ("Choose a folder for presets");
+    folderChooser = std::make_unique<juce::FileChooser> ("Choose a folder for presets", host.presetFolder());
     folderChooser->launchAsync (juce::FileBrowserComponent::openMode
                                     | juce::FileBrowserComponent::canSelectDirectories,
                                 [this] (const juce::FileChooser& fc)
@@ -292,548 +1274,221 @@ void PresetPanel::choosePresetFolder()
         refreshFolderLabel();
         // The list is still showing the old folder's presets until this runs.
         rescanAndRefreshList();
+        setStatus (juce::String ("preset folder changed ") + emDash + " nothing was moved");
     });
     // `folderChooser` is a member unique_ptr, so it (and the chooser it owns) lives as long as this
     // panel does -- which is what makes the raw `this` capture above safe.
 }
 
-void PresetPanel::rescanAndRefreshList()
+void PresetPanel::openMigrate()
 {
-    library.setPresetDir (host.presetFolder());
-    library.rescan();
-
-    const auto keepTag = tagFilterBox.getText();
-    tagFilterBox.clear (juce::dontSendNotification);
-    tagFilterBox.addItem ("any tag", 1);
-    int id = 2;
-    for (const auto& t : library.getAllTags())
-        tagFilterBox.addItem (t, id++);
-    tagFilterBox.setText (keepTag.isEmpty() ? "any tag" : keepTag, juce::dontSendNotification);
-
-    applyFilterAndRefreshList();
-}
-
-void PresetPanel::applyFilterAndRefreshList()
-{
-    filter.text = searchBox.getText();
-    filter.requiredTags.clear();
-    if (tagFilterBox.getText().isNotEmpty() && tagFilterBox.getText() != "any tag")
-        filter.requiredTags.add (tagFilterBox.getText());
-
-    // The two source toggles only earn their space in a plugin that ships built-ins.
+    const auto from = host.presetFolder();
+    const int count = PresetFile::countPresetFiles (from, format);
     bool anyBuiltIn = false;
     for (const auto& e : library.getAll())
         if (e.isBuiltIn) { anyBuiltIn = true; break; }
-    const bool togglesWereVisible = builtInToggle.isVisible();
-    builtInToggle.setVisible (anyBuiltIn);
-    userToggle.setVisible (anyBuiltIn);
-    if (togglesWereVisible != anyBuiltIn) resized();
 
-    filter.includeBuiltIn = ! anyBuiltIn || builtInToggle.getToggleState();
-    filter.includeUser    = ! anyBuiltIn || userToggle.getToggleState();
-    filter.extraPredicate = extras.extraFilterPredicate;
+    auto& m = showModal (540);
+    m.setTitle ("Migrate preset folder");
+    m.addCaption ("from");
+    m.addPathBox (from.getFullPathName());
+    m.addCaption ("to");
+    juce::TextButton* browse = nullptr;
+    auto& dest = m.addPathInput ("choose a destination folder" + ellipsis, browse);
+    auto& summary = m.addSummary ({});
+    auto& move = m.addButton ("move presets", ButtonStyle::accent, {});
+    m.addCancel ("cancel", [this] { closeModal(); });
 
-    const auto previousKey = haveSelection ? selectedCopy.key() : juce::String();
-
-    rows = library.getFiltered (filter);
-    list.updateContent();
-
-    int newRow = -1;
-    if (previousKey.isNotEmpty())
+    auto destination = [&dest]
     {
-        for (size_t i = 0; i < rows.size(); ++i)
-            if (rows[i]->key() == previousKey) { newRow = (int) i; break; }
-    }
-    else if (currentKey.isNotEmpty())
+        const auto text = dest.getText().trim();
+        return juce::File::isAbsolutePath (text) ? juce::File (text) : juce::File();
+    };
+
+    // Everything below lives in the modal, and so do the callbacks that use it.
+    auto update = [&dest, &summary, &move, from, count, anyBuiltIn, destination]
     {
-        for (size_t i = 0; i < rows.size(); ++i)
-            if (rows[i]->key() == currentKey) { newRow = (int) i; break; }
-    }
+        juce::ignoreUnused (dest);
+        const auto to = destination();
+        juce::String text;
+        bool ok = false;
 
-    list.selectRow (newRow, false, true);
-    // Called directly rather than left to selectedRowsChanged: JUCE's ListBox does not renotify
-    // when the row *index* is unchanged even though the array underneath was just rebuilt, so the
-    // details could be left showing a row that has moved.
-    selectionChanged (newRow);
-
-    statusLabel.setText (juce::String (rows.size()) + " preset" + (rows.size() == 1 ? "" : "s")
-                             + " in " + library.getPresetDir().getFullPathName(),
-                         juce::dontSendNotification);
-}
-
-void PresetPanel::selectionChanged (int row)
-{
-    // Whatever was previewing was previewing the row being left.
-    stopAuditionIfRunning();
-
-    selectedRow = row;
-    haveSelection = juce::isPositiveAndBelow (row, (int) rows.size());
-    if (haveSelection)
-        selectedCopy = *rows[(size_t) row];
-
-    updateDetailsFromSelection();
-    updateEnablement();
-
-    if (onSelectionChanged)
-        onSelectionChanged (haveSelection ? &selectedCopy : nullptr);
-}
-
-void PresetPanel::updateDetailsFromSelection()
-{
-    if (haveSelection)
-    {
-        // From the file, not from the tree: they agree after a save, but only the file is right
-        // after somebody renamed it in a file manager. A built-in has no file, so its resource name
-        // stands in -- and Save As is how it becomes a file of that name.
-        nameEditor.setText (selectedCopy.isBuiltIn ? selectedCopy.meta.name
-                                                   : selectedCopy.file.getFileNameWithoutExtension(),
-                            false);
-        authorEditor.setText (selectedCopy.meta.author, false);
-        commentEditor.setText (selectedCopy.meta.comment, false);
-        descriptionEditor.setText (selectedCopy.meta.description, false);
-        tagsEditor.setText (selectedCopy.meta.tags.joinIntoString (", "), false);
-        dateLabel.setText ("saved " + selectedCopy.meta.date, juce::dontSendNotification);
-    }
-    else
-    {
-        // Nothing selected: default from the live document, so a never-saved one still has
-        // sensible Save As defaults.
-        const auto doc = host.captureDocument();
-        nameEditor.setText (doc.getProperty (format.nameProperty, "").toString(), false);
-        authorEditor.setText (doc.getProperty (format.authorProperty, "").toString(), false);
-        commentEditor.setText ({}, false);
-        descriptionEditor.setText ({}, false);
-        tagsEditor.setText ({}, false);
-        dateLabel.setText ({}, juce::dontSendNotification);
-    }
-}
-
-juce::String PresetPanel::typedBaseName() const
-{
-    return PresetFile::sanitiseFilename (nameEditor.getText().trim());
-}
-
-bool PresetPanel::nameMatchesCurrentFile() const
-{
-    return currentFile != juce::File()
-           && typedBaseName() == currentFile.getFileNameWithoutExtension();
-}
-
-void PresetPanel::updateEnablement()
-{
-    // Save means "write back to the file this document is open from". Once the name field names
-    // some other file, that is no longer what is being asked for, so Save As is the way out.
-    const bool canSave = nameMatchesCurrentFile();
-    saveButton.setEnabled (canSave);
-    saveButton.setTooltip (canSave
-        ? "write the live document back to " + currentFile.getFileName()
-        : (currentFile == juce::File() ? "this document has no file yet -- use Save As"
-                                       : "the name field no longer names the open file -- use Save "
-                                         "As to write it under the new name, or rename to move it"));
-
-    // A built-in is readable, loadable and duplicable, but never writable.
-    const bool writable = selectionIsWritable();
-    renameButton.setEnabled (writable);
-    deleteButton.setEnabled (writable);
-    if (haveSelection && ! writable)
-    {
-        const auto why = "built-in -- duplicate it to get an editable copy";
-        renameButton.setTooltip (why);
-        deleteButton.setTooltip (why);
-    }
-    else
-    {
-        renameButton.setTooltip ({});
-        deleteButton.setTooltip ({});
-    }
-
-    loadButton.setEnabled (haveSelection);
-
-    auditionButton.setEnabled (auditioner != nullptr && haveSelection
-                               && auditioner->canAudition (selectedCopy));
-}
-
-void PresetPanel::loadEntry (const PresetEntry& entry)
-{
-    const auto label = entry.isBuiltIn ? entry.meta.name : entry.file.getFileNameWithoutExtension();
-
-    auto loaded = entry.isBuiltIn
-        ? PresetFile::loadFromData (entry.data, entry.dataSize, entry.meta.name, format)
-        : PresetFile::load (entry.file, format);
-
-    if (! loaded.has_value())
-    {
-        showError ("Could not load \"" + label + "\" -- it may be corrupt.");
-        return;
-    }
-
-    host.applyDocument (loaded->tree);
-    // A built-in has no file to write back to, so the open document has no on-disk identity and
-    // Save falls through to Save As -- which is exactly what editing a built-in should do.
-    currentFile = entry.file;
-    currentKey = entry.key();
-    host.documentLoaded (entry.file, loaded->meta);
-
-    statusLabel.setText ("loaded \"" + label + "\"", juce::dontSendNotification);
-    updateEnablement();   // the open file changed, and with it what Save means
-}
-
-void PresetPanel::doLoad()
-{
-    if (! haveSelection) return;
-    loadEntry (selectedCopy);
-}
-
-PresetMetadata PresetPanel::metadataFromEditors() const
-{
-    PresetMetadata m;
-    // The name is the file's; this is what has been typed for it, sanitised the way a filename is.
-    m.name = typedBaseName();
-    m.author = authorEditor.getText().trim();
-    m.comment = commentEditor.getText().trim();
-    m.description = descriptionEditor.getText();
-    m.tags = juce::StringArray::fromTokens (tagsEditor.getText(), ",", "");
-    m.tags.trim();
-    m.tags.removeEmptyStrings();
-    m.date = juce::Time::getCurrentTime().toISO8601 (true);
-    // `extra` is deliberately left alone here: it belongs to a *document*, not to these editors,
-    // and saving and renaming disagree about which document that is. Each fills it in itself.
-    return m;
-}
-
-void PresetPanel::writeTo (const juce::File& file)
-{
-    auto meta = metadataFromEditors();
-    // A save writes the *live* document, so its listable extras are the live one's.
-    meta.extra = host.captureExtraMetadata();
-
-    if (! PresetFile::save (file, host.captureDocument(), meta, format))
-    {
-        showError ("Could not write \"" + file.getFullPathName() + "\".");
-        return;
-    }
-
-    auto saved = meta;
-    saved.name = file.getFileNameWithoutExtension();   // the file had the last word
-    host.documentSaved (file, saved);
-
-    currentFile = file;
-    currentKey = file.getFullPathName();
-    statusLabel.setText ("saved \"" + saved.name + "\"", juce::dontSendNotification);
-    rescanAndRefreshList();
-}
-
-void PresetPanel::doNew()
-{
-    // Nothing is open afterwards, so nothing may be previewing either.
-    stopAuditionIfRunning();
-    host.newDocument();
-
-    // No file and no key: `updateEnablement` reads that as "this document has no file yet", which
-    // turns Save off and points at Save As -- an empty preset that cannot be written over anything
-    // is exactly what New is for.
-    currentFile = juce::File();
-    currentKey = {};
-
-    // Deselect *before* the details are refilled: with no row selected they default from the live
-    // document, which `newDocument()` has just emptied, so every field clears with nothing here
-    // having to name them one by one. `deselectAllRows` does not call back into the model, hence
-    // the state kept beside it is cleared by hand.
-    list.deselectAllRows();
-    selectedRow = -1;
-    haveSelection = false;
-    selectedCopy = {};
-    if (onSelectionChanged) onSelectionChanged (nullptr);
-
-    updateDetailsFromSelection();
-    updateEnablement();
-    statusLabel.setText ("new preset", juce::dontSendNotification);
-}
-
-void PresetPanel::doSave()
-{
-    // Disabled in that case, but a keyboard shortcut or a stale click must not write the live
-    // document over a file the name field no longer names.
-    if (! nameMatchesCurrentFile()) { doSaveAs(); return; }
-    writeTo (currentFile);
-}
-
-void PresetPanel::doSaveAs()
-{
-    auto folder = host.presetFolder();
-    folder.createDirectory();
-
-    // No file chooser: the folder is this panel's own setting and the name is the field above the
-    // button, so a native dialog would ask for both again. The document's own name is the fallback
-    // for an empty field.
-    auto base = typedBaseName();
-    if (nameEditor.getText().trim().isEmpty())
-        base = PresetFile::sanitiseFilename (
-            host.captureDocument().getProperty (format.nameProperty, "").toString());
-
-    const auto target = folder.getChildFile (base + format.extension);
-
-    if (! target.existsAsFile() || target == currentFile)
-    {
-        writeTo (target);
-        return;
-    }
-
-    // Replacing a file is what a native save dialog's warnAboutOverwriting used to ask about.
-    auto opts = juce::MessageBoxOptions::makeOptionsOkCancel (
-        juce::MessageBoxIconType::WarningIcon, "Replace Preset",
-        "\"" + target.getFileName() + "\" already exists in this folder. Replace it?",
-        "Replace", "Cancel", this);
-
-    juce::AlertWindow::showAsync (opts,
-        [safe = juce::Component::SafePointer<PresetPanel> (this), target] (int result)
-    {
-        if (auto* o = safe.getComponent(); o != nullptr && result == 1)
-            o->writeTo (target);
-    });
-}
-
-void PresetPanel::doDelete()
-{
-    // Disabled for a built-in, but a keyboard route or a stale click must not get past it either.
-    if (! selectionIsWritable()) return;
-    const auto copy = selectedCopy;
-
-    auto opts = juce::MessageBoxOptions::makeOptionsOkCancel (
-        juce::MessageBoxIconType::WarningIcon, "Delete Preset",
-        "Delete \"" + copy.file.getFileName() + "\"? This moves the file to the trash.",
-        "Delete", "Cancel", this);
-
-    // SafePointer, never a raw `this`: closing the plugin window while a confirmation is up must
-    // not call back into a destroyed panel.
-    juce::AlertWindow::showAsync (opts,
-        [safe = juce::Component::SafePointer<PresetPanel> (this), copy] (int result)
-    {
-        auto* o = safe.getComponent();
-        if (o == nullptr || result != 1) return;
-
-        juce::String err;
-        if (! o->library.deletePreset (copy, err))
+        if (to == juce::File())
+            text = "Pick a destination. Every preset file in the current folder is moved there, then "
+                   "the library points at the new folder.";
+        else if (to == from)
+            text = "That is the current folder. Pick another one.";
+        else if (to.isAChildOf (from))
+            text = "That folder is inside the current one. Pick one outside it.";
+        else
         {
-            o->showError (err);
-            return;
+            ok = true;
+            text = plural (count, "user preset") + (count == 1 ? " will be moved." : " will be moved.");
+            if (anyBuiltIn) text << " Factory presets stay in the plugin.";
+            text << " The library then points at the new folder.";
         }
 
-        if (copy.key() == o->currentKey)
-        {
-            o->currentFile = juce::File();   // its on-disk identity is gone; next Save is a Save As
-            o->currentKey = {};
-        }
+        summary.setText (text, juce::dontSendNotification);
+        move.setEnabled (ok);
+    };
 
-        o->haveSelection = false;
-        o->selectedRow = -1;
-        o->rescanAndRefreshList();
-    });
+    dest.onTextChange = update;
+    move.onClick = [this, destination]
+    {
+        const auto to = destination();
+        closeModal();
+        runMigrate (to);
+    };
+    browse->onClick = [this, safeDest = juce::Component::SafePointer<juce::TextEditor> (&dest), from]
+    {
+        folderChooser = std::make_unique<juce::FileChooser> ("Choose where to move your presets",
+                                                             from.getParentDirectory());
+        folderChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                        | juce::FileBrowserComponent::canSelectDirectories,
+                                    [safeDest] (const juce::FileChooser& fc)
+        {
+            const auto dir = fc.getResult();
+            if (safeDest != nullptr && dir != juce::File())
+                safeDest->setText (dir.getFullPathName(), true);
+        });
+    };
+
+    update();
+    finishModal();
+    if (dest.isShowing()) dest.grabKeyboardFocus();
 }
 
-void PresetPanel::doRename()
+void PresetPanel::runMigrate (const juce::File& dest)
 {
-    if (! selectionIsWritable()) return;
+    const auto oldFolder = host.presetFolder();
+    const auto result = host.migratePresetFolder (dest, format);
 
-    const auto oldFile = selectedCopy.file;
-
-    auto meta = metadataFromEditors();
-    // A rename edits a file that already exists, which may not be the open document -- so its
-    // extras stay the ones it was saved with rather than being restamped from the live document.
-    meta.extra = selectedCopy.meta.extra;
-
-    juce::String err;
-    if (! library.renamePreset (selectedCopy, meta, err))
+    // The open preset moved with the rest; follow it, or the next save would recreate it where
+    // it used to be.
+    for (int i = 0; i < result.movedFrom.size() && i < result.moved.size(); ++i)
     {
-        showError (err);
+        if (result.movedFrom[i] == currentFile)
+        {
+            currentFile = result.moved[i];
+            currentKey = currentFile.getFullPathName();
+        }
+        if (result.movedFrom[i].getFullPathName() == selectedKey)
+            selectedKey = result.moved[i].getFullPathName();
+    }
+
+    refreshFolderLabel();
+    rescanAndRefreshList();
+
+    if (! result.ok)
+    {
+        setStatus ("migration stopped " + emDash + " moved " + plural (result.moved.size(), "preset"));
+        auto& m = showModal (500);
+        m.setTitle ("Migration stopped");
+        m.addText (result.error);
+        m.addText (result.moved.isEmpty()
+                       ? juce::String ("Nothing was moved. The library still points at the old folder.")
+                       : plural (result.moved.size(), "preset") + " had already moved to the new folder "
+                             "before it stopped. The library still points at the old folder.");
+        if (! result.moved.isEmpty())
+        {
+            juce::StringArray names;
+            for (const auto& f : result.moved) names.add (f.getFileName());
+            m.addText ("moved: " + names.joinIntoString (", "));
+        }
+        m.addButton ("ok", ButtonStyle::accent, [this] { closeModal(); });
+        finishModal();
         return;
     }
 
-    // If this was the file the live document came from, keep it and this panel in step -- or the
-    // next plain Save would write the old name straight back over the rename.
-    if (oldFile != juce::File() && oldFile == currentFile)
-    {
-        currentFile = selectedCopy.file;
-        currentKey = selectedCopy.key();
-        host.documentSaved (selectedCopy.file, selectedCopy.meta);
-    }
-
-    statusLabel.setText ("renamed to \"" + selectedCopy.file.getFileName() + "\"",
-                         juce::dontSendNotification);
-    rescanAndRefreshList();
-    updateEnablement();
+    setStatus ("moved " + plural (result.moved.size(), "preset"));
+    showMigrateDone (oldFolder, result);
 }
 
-void PresetPanel::doDuplicate()
+void PresetPanel::showMigrateDone (const juce::File& oldFolder, const MigrationResult& result)
 {
-    if (! haveSelection) return;
+    auto& m = showModal (500);
+    m.setTitle ("Moved " + plural (result.moved.size(), "preset"));
 
-    juce::File copy;
-    juce::String err;
-    if (! library.duplicatePreset (selectedCopy, copy, err))
+    if (result.sourceHasOtherContent)
     {
-        showError (err);
+        // Something that is not a preset is still in there, and it is not this panel's to throw away.
+        m.addText ("The library now points at the new folder. The old one still holds files that "
+                   "are not presets, so it is kept.");
+        m.addPathBox (oldFolder.getFullPathName());
+        if (! result.skipped.isEmpty())
+        {
+            juce::StringArray shown;
+            for (int i = 0; i < juce::jmin (4, result.skipped.size()); ++i) shown.add (result.skipped[i]);
+            auto text = "left behind: " + shown.joinIntoString (", ");
+            if (result.skipped.size() > shown.size())
+                text << " and " << (result.skipped.size() - shown.size()) << " more";
+            m.addText (text);
+        }
+        m.addButton ("keep it", ButtonStyle::accent, [this]
+        {
+            closeModal();
+            setStatus ("migrated " + middot + " old folder kept");
+        });
+        finishModal();
         return;
     }
 
-    statusLabel.setText ("copied to \"" + copy.getFileName() + "\"", juce::dontSendNotification);
-    rescanAndRefreshList();
+    m.addText ("The library now points at the new folder. Delete the old one?");
+    m.addPathBox (oldFolder.getFullPathName());
+    // Deleting is never implied by migrating, and the destructive option is never the emphasised one.
+    m.addButton ("keep it", ButtonStyle::accent, [this]
+    {
+        closeModal();
+        setStatus ("migrated " + middot + " old folder kept");
+    });
+    m.addButton ("delete old folder", ButtonStyle::destructive, [this, oldFolder]
+    {
+        const auto folder = oldFolder;
+        closeModal();
+        // To the trash, never a hard delete: it is the user's folder, and it was theirs first.
+        if (folder.moveToTrash())
+            setStatus ("migrated " + middot + " old folder moved to trash");
+        else
+            showError ("Could not move " + quoted (folder.getFullPathName()) + " to the trash. It has been kept.");
+    });
+    finishModal();
 }
 
-void PresetPanel::showRowMenu (int row)
+// ── modal ───────────────────────────────────────────────────────────────────
+
+PresetModal& PresetPanel::showModal (int cardWidth)
 {
-    if (! juce::isPositiveAndBelow (row, (int) rows.size())) return;
+    if (modal != nullptr) closeModal();
+    modal = std::make_unique<PresetModal> (palette, cardWidth);
+    addAndMakeVisible (*modal);
+    modal->setBounds (getLocalBounds());
+    return *modal;
+}
 
-    // Acting on the row under the pointer means selecting it first, the same as a left click.
-    if (row != selectedRow)
-    {
-        list.selectRow (row);
-        selectionChanged (row);
-    }
-    if (! haveSelection) return;
+void PresetPanel::finishModal()
+{
+    if (modal == nullptr) return;
+    modal->resized();
+    modal->toFront (false);
+    if (modal->isShowing()) modal->grabKeyboardFocus();
+}
 
-    const bool writable = selectionIsWritable();
-
-    juce::PopupMenu m;
-    m.addItem (1, "show in file manager", writable);
-    m.addItem (2, "rename...", writable);
-    // Enabled for a built-in on purpose: duplicating is how one becomes editable.
-    m.addItem (3, writable ? "duplicate" : "duplicate to my presets");
-    m.addSeparator();
-    m.addItem (4, "delete...", writable);
-
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&list),
-                     [safe = juce::Component::SafePointer<PresetPanel> (this)] (int result)
-    {
-        auto* o = safe.getComponent();
-        if (o == nullptr || result == 0 || ! o->haveSelection) return;
-
-        switch (result)
-        {
-            case 1: o->selectedCopy.file.revealToUser(); break;
-            // The name field *is* the rename control, so this puts the caret in it rather than
-            // offering a second way to type the same thing.
-            case 2: o->nameEditor.grabKeyboardFocus();
-                    o->nameEditor.selectAll();
-                    break;
-            case 3: o->doDuplicate(); break;
-            case 4: o->doDelete();    break;
-            default: break;
-        }
-    });
+void PresetPanel::closeModal()
+{
+    if (modal == nullptr) return;
+    modal->setVisible (false);
+    removeChildComponent (modal.get());
+    retiredModal = std::move (modal);
 }
 
 void PresetPanel::showError (const juce::String& message)
 {
-    auto opts = juce::MessageBoxOptions::makeOptionsOk (
-        juce::MessageBoxIconType::WarningIcon, "Preset Librarian", message, "OK", this);
-    juce::AlertWindow::showAsync (opts, nullptr);   // nothing captured, nothing unsafe
-}
-
-void PresetPanel::refresh()
-{
-    applyFilterAndRefreshList();
-    refreshFolderLabel();   // the folder can be changed from here, but it is also a plugin setting
-}
-
-void PresetPanel::paint (juce::Graphics& g)
-{
-    g.setColour (colours.background);
-    g.fillAll();
-}
-
-void PresetPanel::resized()
-{
-    auto b = getLocalBounds().reduced (6);
-
-    auto details = b.removeFromRight (juce::jmax (220, b.getWidth() / 3));
-    b.removeFromRight (6);
-    auto listCol = b;
-
-    // ── list column ──────────────────────────────────────────────────────────
-    auto top = listCol.removeFromTop (24);
-    refreshButton.setBounds (top.removeFromRight (56));
-    top.removeFromRight (4);
-    tagFilterBox.setBounds (top.removeFromRight (110));
-    top.removeFromRight (4);
-    searchBox.setBounds (top);
-
-    if (builtInToggle.isVisible())
-    {
-        auto sources = listCol.removeFromTop (20);
-        builtInToggle.setBounds (sources.removeFromLeft (90));
-        userToggle.setBounds (sources.removeFromLeft (70));
-    }
-
-    if (extras.extraFilters != nullptr && extras.extraFiltersHeight > 0)
-        extras.extraFilters->setBounds (listCol.removeFromTop (extras.extraFiltersHeight));
-
-    listCol.removeFromTop (2);
-    statusLabel.setBounds (listCol.removeFromBottom (16));
-
-    auto folderRow = listCol.removeFromBottom (20);
-    folderButton.setBounds (folderRow.removeFromLeft (66).reduced (2, 1));
-    folderLabel.setBounds (folderRow);
-
-    list.setBounds (listCol.reduced (0, 2));
-
-    // ── details column ───────────────────────────────────────────────────────
-    auto r = details;
-
-    if (extras.detailsHeader != nullptr && extras.detailsHeaderHeight > 0)
-    {
-        extras.detailsHeader->setBounds (r.removeFromTop (extras.detailsHeaderHeight));
-        r.removeFromTop (4);
-    }
-    {
-        auto loadRow = r.removeFromTop (22);
-        if (auditionButton.isVisible())
-        {
-            loadButton.setBounds (loadRow.removeFromLeft (loadRow.getWidth() / 2).reduced (2, 0));
-            auditionButton.setBounds (loadRow.reduced (2, 0));
-        }
-        else
-        {
-            loadButton.setBounds (loadRow.reduced (2, 0));
-        }
-        r.removeFromTop (4);
-    }
-
-    nameLabel.setBounds (r.removeFromTop (14));
-    {
-        // The extension sits inside the name row, dimmed: part of the filename, not part of what
-        // can be typed.
-        auto nameRow = r.removeFromTop (22);
-        const int extWidth = juce::jmin (nameRow.getWidth() / 3, 74);
-        extensionLabel.setBounds (nameRow.removeFromRight (extWidth).withTrimmedLeft (3));
-        nameEditor.setBounds (nameRow);
-    }
-    r.removeFromTop (4);
-    authorLabel.setBounds (r.removeFromTop (14));
-    authorEditor.setBounds (r.removeFromTop (22));
-    r.removeFromTop (4);
-    commentLabel.setBounds (r.removeFromTop (14));
-    commentEditor.setBounds (r.removeFromTop (22));
-    r.removeFromTop (4);
-    tagsLabel.setBounds (r.removeFromTop (14));
-    tagsEditor.setBounds (r.removeFromTop (22));
-    r.removeFromTop (4);
-    descriptionLabel.setBounds (r.removeFromTop (14));
-    descriptionEditor.setBounds (r.removeFromTop (56));
-    r.removeFromTop (4);
-    dateLabel.setBounds (r.removeFromTop (14));
-    r.removeFromTop (8);
-
-    // New sits with the two saves: the three things that decide what the live document *is*.
-    auto row1 = r.removeFromTop (24);
-    const int third = row1.getWidth() / 3;
-    newButton.setBounds (row1.removeFromLeft (third).reduced (2, 0));
-    saveButton.setBounds (row1.removeFromLeft (third).reduced (2, 0));
-    saveAsButton.setBounds (row1.reduced (2, 0));
-    r.removeFromTop (4);
-    auto row2 = r.removeFromTop (24);
-    renameButton.setBounds (row2.removeFromLeft (row2.getWidth() / 2).reduced (2, 0));
-    deleteButton.setBounds (row2.reduced (2, 0));
+    setStatus (message);
+    auto& m = showModal (440);
+    m.setTitle ("Preset librarian");
+    m.addText (message);
+    m.addButton ("ok", ButtonStyle::accent, [this] { closeModal(); });
+    finishModal();
 }
 
 } // namespace atl

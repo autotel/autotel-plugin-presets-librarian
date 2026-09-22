@@ -41,11 +41,19 @@ struct BuiltInPreset
     int          size = 0;
 };
 
+/** The name a row shows: the file's base name, or a built-in's resource name. The filename is the
+    name (see `PresetMetadata`), so this is never `meta.name` for a file. */
+juce::String displayName (const PresetEntry&);
+
 /** Free text over name/author/description/comment, plus required tags. */
 struct PresetFilter
 {
     juce::String      text;
-    juce::StringArray requiredTags;   // an entry must carry ALL of these
+    juce::StringArray requiredTags;   // an entry must carry ALL of these -- or ANY, see below
+
+    /** `requiredTags` as OR rather than AND: an entry carrying any one of them passes. Irrelevant
+        while `requiredTags` is empty. */
+    bool matchAnyTag = false;
 
     bool includeBuiltIn = true;
     bool includeUser    = true;
@@ -55,6 +63,30 @@ struct PresetFilter
         rather than growing this struct a field the other plugins would ignore. */
     std::function<bool (const PresetEntry&)> extraPredicate;
 };
+
+/** One tag and how many rows carry it -- what the panel's tag rail lists. */
+struct TagCount
+{
+    juce::String tag;
+    int count = 0;
+};
+
+/** What a list can be ordered by. The secondary key is always the name, so the order is stable
+    whatever the primary key does. */
+enum class PresetSortKey
+{
+    name,              // display name, natural and case-insensitive ("kit 2" before "kit 10")
+    dateModified,      // `meta.date`; a file with none falls back to its modification time
+    author,
+    firstTag,          // alphabetically first of the row's tags; untagged rows sort after tagged
+    favouritesFirst,   // favourites are the *greater* key: descending puts them on top
+    source             // built-ins before the user's own when ascending
+};
+
+/** Orders `rows` in place. `ascending` reverses the whole comparison, secondary key included.
+    `isFavourite` is only consulted by `favouritesFirst`; left empty, nothing is a favourite. */
+void sortPresets (std::vector<const PresetEntry*>& rows, PresetSortKey key, bool ascending,
+                  const std::function<bool (const PresetEntry&)>& isFavourite = {});
 
 /** Scans a folder of preset files (recursively) into rows and offers filtered views over them,
     plus the file operations a librarian needs: delete, rename, duplicate. Knows nothing about what
@@ -81,6 +113,10 @@ public:
     std::vector<const PresetEntry*> getFiltered (const PresetFilter&) const;
     juce::StringArray getAllTags() const;
 
+    /** Every tag in the library (built-ins included, filters ignored) with the number of rows
+        carrying it, ordered by tag, case-insensitively. */
+    std::vector<TagCount> getTagCounts() const;
+
     /** Moves the file to the trash (falling back to a hard delete). The caller is expected to have
         confirmed with the user already. Refuses a built-in. */
     bool deletePreset (const PresetEntry& entry, juce::String& errorOut);
@@ -99,6 +135,14 @@ public:
         editable one. The copy lands in the preset folder under the built-in's own name, so the
         first duplicate of "Bell" is "Bell" and not "Bell 2" unless one is already there. */
     bool duplicatePreset (const PresetEntry& entry, juce::File& newFileOut, juce::String& errorOut);
+
+    /** Editing a preset that cannot be written to -- a built-in -- writes an editable copy instead
+        of failing: `duplicatePreset`, then `renamePreset` on the copy with `newMeta`. `copyOut` is
+        the copy as it ended up on disk. If the metadata step fails the plain duplicate is left in
+        place (it is still a faithful copy) and false is returned. Works on a writable entry too,
+        where it is simply "duplicate, then edit the duplicate". */
+    bool writeEditableCopy (const PresetEntry& entry, const PresetMetadata& newMeta,
+                            PresetEntry& copyOut, juce::String& errorOut);
 
 private:
     void rescanBuiltIns();

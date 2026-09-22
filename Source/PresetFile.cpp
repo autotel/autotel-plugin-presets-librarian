@@ -268,5 +268,98 @@ juce::File resolveCollision (const juce::File& folder, const juce::String& baseN
     return candidate;
 }
 
+namespace
+{
+bool hasPresetExtension (const juce::File& f, const PresetFormat& format)
+{
+    return f.getFileExtension().equalsIgnoreCase (format.extension);
+}
+
+/** Any *file* (not directory) still under `folder`, recursively -- empty directories don't count.
+    Safe to call on a non-directory: `findChildFiles` just comes back empty. */
+bool anyFileUnder (const juce::File& folder)
+{
+    return ! folder.findChildFiles (juce::File::findFiles, true).isEmpty();
+}
+} // namespace
+
+int countPresetFiles (const juce::File& folder, const PresetFormat& format)
+{
+    if (! folder.isDirectory()) return 0;
+
+    int count = 0;
+    for (const auto& f : folder.findChildFiles (juce::File::findFiles, true))
+        if (hasPresetExtension (f, format))
+            ++count;
+    return count;
+}
+
+MigrationResult moveAllPresets (const juce::File& from, const juce::File& to,
+                                const PresetFormat& format)
+{
+    MigrationResult result;
+
+    if (! from.isDirectory())
+    {
+        result.error = "\"" + from.getFullPathName() + "\" is not a folder.";
+        return result;
+    }
+    if (to == from || to.isAChildOf (from))
+    {
+        result.error = "The destination cannot be the source, or inside it.";
+        return result;
+    }
+
+    if (! to.isDirectory() && ! to.createDirectory().wasOk())
+    {
+        result.error = "Could not create \"" + to.getFullPathName() + "\".";
+        return result;
+    }
+
+    for (const auto& f : from.findChildFiles (juce::File::findFiles, true))
+    {
+        if (! hasPresetExtension (f, format))
+        {
+            result.skipped.add (f.getRelativePathFrom (from));
+            continue;
+        }
+
+        // Keep the file's own subfolder relative to `from`, under `to`.
+        const auto sourceParent = f.getParentDirectory();
+        const auto targetDir = sourceParent == from
+                                    ? to
+                                    : to.getChildFile (sourceParent.getRelativePathFrom (from));
+
+        if (! targetDir.isDirectory() && ! targetDir.createDirectory().wasOk())
+        {
+            result.error = "Could not create \"" + targetDir.getFullPathName() + "\".";
+            result.sourceHasOtherContent = anyFileUnder (from);
+            return result;
+        }
+
+        const auto target = resolveCollision (targetDir, f.getFileNameWithoutExtension(), format);
+
+        // moveFileTo can fail across filesystems (EXDEV) even when the move is otherwise entirely
+        // legitimate -- a copy-then-delete gets there the long way in that case.
+        bool moved = f.moveFileTo (target);
+        if (! moved)
+            moved = f.copyFileTo (target) && f.deleteFile();
+
+        if (! moved)
+        {
+            result.error = "Could not move \"" + f.getFullPathName() + "\".";
+            result.sourceHasOtherContent = anyFileUnder (from);
+            return result;
+        }
+
+        result.moved.add (target);
+        result.movedFrom.add (f);
+    }
+
+    result.ok = true;
+    result.sourceHasOtherContent = anyFileUnder (from);
+    return result;
+}
+
 } // namespace PresetFile
 } // namespace atl

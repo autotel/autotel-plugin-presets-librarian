@@ -1,7 +1,15 @@
 #include "PresetLibrary.h"
+#include <algorithm>
 
 namespace atl
 {
+
+juce::String displayName (const PresetEntry& entry)
+{
+    // Read off the file itself, not meta.name -- meta.name can be stale after an external rename
+    // until the next rescan, and the file is the thing that is actually true right now.
+    return entry.isBuiltIn ? entry.meta.name : entry.file.getFileNameWithoutExtension();
+}
 
 PresetLibrary::PresetLibrary (PresetFormat format, juce::File presetDir)
     : format_ (std::move (format)), presetDir_ (std::move (presetDir)) {}
@@ -67,6 +75,103 @@ juce::StringArray PresetLibrary::getAllTags() const
     return tags;
 }
 
+std::vector<TagCount> PresetLibrary::getTagCounts() const
+{
+    std::vector<TagCount> counts;
+
+    for (const auto& e : entries_)
+        for (const auto& t : e.meta.tags)
+        {
+            auto existing = std::find_if (counts.begin(), counts.end(),
+                                          [&] (const TagCount& c) { return c.tag == t; });
+            if (existing == counts.end())
+                counts.push_back ({ t, 1 });
+            else
+                ++existing->count;
+        }
+
+    std::sort (counts.begin(), counts.end(), [] (const TagCount& a, const TagCount& b)
+    {
+        return a.tag.compareIgnoreCase (b.tag) < 0;
+    });
+
+    return counts;
+}
+
+void sortPresets (std::vector<const PresetEntry*>& rows, PresetSortKey key, bool ascending,
+                  const std::function<bool (const PresetEntry&)>& isFavourite)
+{
+    // meta.date if it has one; a file with none falls back to its own modification time. A
+    // built-in with no date has neither, and sorts as the empty string.
+    auto dateOf = [] (const PresetEntry& e) -> juce::String
+    {
+        if (e.meta.date.isNotEmpty()) return e.meta.date;
+        if (! e.isBuiltIn && e.file.existsAsFile())
+            return e.file.getLastModificationTime().toISO8601 (true);
+        return {};
+    };
+
+    // Alphabetically first, case-insensitively; empty (untagged) is handled by the caller.
+    auto firstTagOf = [] (const PresetEntry& e) -> juce::String
+    {
+        juce::String lowest;
+        for (const auto& t : e.meta.tags)
+            if (lowest.isEmpty() || t.compareIgnoreCase (lowest) < 0)
+                lowest = t;
+        return lowest;
+    };
+
+    std::stable_sort (rows.begin(), rows.end(), [&] (const PresetEntry* a, const PresetEntry* b)
+    {
+        int primary = 0;
+        switch (key)
+        {
+            case PresetSortKey::name:
+                // Falls straight through to the secondary (name) key below -- it is the same
+                // comparison, so there is no point computing it twice.
+                break;
+
+            case PresetSortKey::dateModified:
+                primary = dateOf (*a).compare (dateOf (*b));
+                break;
+
+            case PresetSortKey::author:
+                primary = a->meta.author.compareIgnoreCase (b->meta.author);
+                break;
+
+            case PresetSortKey::firstTag:
+            {
+                const auto ta = firstTagOf (*a);
+                const auto tb = firstTagOf (*b);
+                const bool aUntagged = ta.isEmpty();
+                const bool bUntagged = tb.isEmpty();
+                if (aUntagged != bUntagged)
+                    primary = aUntagged ? 1 : -1;   // untagged sorts after tagged
+                else
+                    primary = ta.compareIgnoreCase (tb);
+                break;
+            }
+
+            case PresetSortKey::favouritesFirst:
+            {
+                const bool fa = isFavourite && isFavourite (*a);
+                const bool fb = isFavourite && isFavourite (*b);
+                primary = fa == fb ? 0 : (fa ? 1 : -1);   // favourite is the greater key
+                break;
+            }
+
+            case PresetSortKey::source:
+                // Built-in is the lesser key -- built-ins sort first when ascending.
+                primary = a->isBuiltIn == b->isBuiltIn ? 0 : (a->isBuiltIn ? -1 : 1);
+                break;
+        }
+
+        const int cmp = primary != 0 ? primary
+                                     : displayName (*a).compareNatural (displayName (*b), false);
+        return ascending ? cmp < 0 : cmp > 0;
+    });
+}
+
 std::vector<const PresetEntry*> PresetLibrary::getFiltered (const PresetFilter& filter) const
 {
     std::vector<const PresetEntry*> out;
@@ -77,10 +182,20 @@ std::vector<const PresetEntry*> PresetLibrary::getFiltered (const PresetFilter& 
 
         if (! filter.requiredTags.isEmpty())
         {
-            bool hasAll = true;
-            for (const auto& t : filter.requiredTags)
-                if (! e.meta.tags.contains (t)) { hasAll = false; break; }
-            if (! hasAll) continue;
+            bool passes;
+            if (filter.matchAnyTag)
+            {
+                passes = false;
+                for (const auto& t : filter.requiredTags)
+                    if (e.meta.tags.contains (t)) { passes = true; break; }
+            }
+            else
+            {
+                passes = true;
+                for (const auto& t : filter.requiredTags)
+                    if (! e.meta.tags.contains (t)) { passes = false; break; }
+            }
+            if (! passes) continue;
         }
 
         if (filter.text.isNotEmpty())
@@ -204,6 +319,40 @@ bool PresetLibrary::duplicatePreset (const PresetEntry& entry, juce::File& newFi
 
     newFileOut = target;
     rescan();
+    return true;
+}
+
+bool PresetLibrary::writeEditableCopy (const PresetEntry& entry, const PresetMetadata& newMeta,
+                                       PresetEntry& copyOut, juce::String& errorOut)
+{
+    juce::File newFile;
+    if (! duplicatePreset (entry, newFile, errorOut))
+        return false;
+
+    // A value, not a reference into entries_: renamePreset below calls rescan(), which would
+    // leave a reference into the vector dangling the moment it clears and repopulates.
+    PresetEntry copy;
+    bool found = false;
+    for (const auto& e : entries_)
+        if (! e.isBuiltIn && e.file == newFile) { copy = e; found = true; break; }
+
+    if (! found)
+    {
+        errorOut = "The copy could not be found after duplicating.";
+        return false;
+    }
+
+    // renamePreset writes whatever meta it is given, so the extra tree has to be carried over
+    // explicitly: newMeta's own if the caller set one, otherwise the copy's existing one (a
+    // faithful duplicate already has one worth keeping).
+    auto metaToWrite = newMeta;
+    if (! metaToWrite.extra.isValid())
+        metaToWrite.extra = copy.meta.extra;
+
+    if (! renamePreset (copy, metaToWrite, errorOut))
+        return false;   // the plain duplicate is left in place -- still a faithful copy
+
+    copyOut = copy;
     return true;
 }
 
