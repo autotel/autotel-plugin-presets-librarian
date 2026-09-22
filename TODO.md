@@ -98,6 +98,32 @@ asked, not on every arrow-key press, and browsing should never be able to lose u
       and `grep -rn "PatchLibrary" Source/` now returns nothing. Left alone rather than folded into
       the browsing-is-not-loading pass, because it is a different piece of rot.
 
+## Panel redesign (2026-09-22)
+
+Landed: the librarian tab was rebuilt around the preset instead of a details column — folder bar
+with `folder…`/`migrate…`, filter bar, active tag filters, a tag rail with counts, the pinned
+live-patch strip (dirty chip, `edit…`/`save`/`revert to disk`), rows with a star/tags/comment and a
+selected-row action strip, the row-anchored edit popover, and a status bar with `new`/`save as`.
+Loading now passes a dirty guard (`save, then load` / `load anyway` / `cancel`, policy in
+`PresetPanelOptions::loadGuard`) instead of loading straight over unsaved work. See `README.md` and
+`Presets librarian redesign/SPEC.md` for the shape of it.
+
+- [ ] **Consumers should implement `PresetHost::documentHasUnsavedChanges()`.** It defaults to
+      `true`, so a host that hasn't implemented it gets the load-over-dirty prompt on every single
+      load. Sampler, Lanes, mepSynth, `messy system` and `modal refractor` all need a real answer
+      wired to their own dirty tracking.
+- [ ] **Lanes' `detailsHeader` waveform preview now only shows inside the edit popover**, not beside
+      the fields all the time — the details column it used to sit in is gone. Decide whether Lanes
+      wants the waveform somewhere else too, or whether popover-only is fine.
+- [ ] **Favourites persistence is up to each plugin.** The panel keeps favourites in memory
+      (`getFavourites`/`setFavourites`/`onFavouritesChanged`) but does nothing to make them outlast
+      the editor; every consumer that wants them to survive a restart has to persist and restore the
+      list itself.
+- [ ] **A host that remembers the open preset's path should override `migratePresetFolder`.** The
+      panel follows a moved file for its own bookkeeping, but no `PresetHost` virtual tells the
+      plugin the file moved, so a plugin-side path (an autosave target, a "recently opened" entry)
+      goes stale after a migration unless the override follows it.
+
 ## Notes for future consumers
 
 Sampler needs none of the newer library surface (built-ins, `extra` metadata, panel extras,
