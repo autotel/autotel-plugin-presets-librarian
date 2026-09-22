@@ -123,6 +123,11 @@ Loading now passes a dirty guard (`save, then load` / `load anyway` / `cancel`, 
       panel follows a moved file for its own bookkeeping, but no `PresetHost` virtual tells the
       plugin the file moved, so a plugin-side path (an autosave target, a "recently opened" entry)
       goes stale after a migration unless the override follows it.
+- [ ] **messy system plugin's `Tests/main.cpp` has no `juce::ScopedJuceInitialiser_GUI`.** Its
+      tests pass, but the librarian's panel tests now build real components, so the process ends
+      with a long tail of leaked-object reports and leak-detector assertions at static teardown.
+      mepSynth, Sampler and Lanes already construct one in their test mains; Messy should too.
+      (Verified 2026-09-22: all five consumers build and pass their suites against this redesign.)
 
 ## Notes for future consumers
 
