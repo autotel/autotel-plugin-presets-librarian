@@ -491,6 +491,7 @@ void PresetPanel::applyFilterAndRefreshList()
     filter.extraPredicate = extras.extraFilterPredicate;
 
     rows = library.getFiltered (filter);
+    rowsGeneration = library.generation();
     sortPresets (rows, sortKey, sortAscending,
                  [this] (const PresetEntry& e) { return favourites.contains (favouriteKey (e)); });
 
@@ -536,7 +537,7 @@ const PresetEntry* PresetPanel::findEntry (const juce::String& key) const
 
 int PresetPanel::rowIndexOf (const juce::String& key) const
 {
-    if (key.isEmpty()) return -1;
+    if (key.isEmpty() || rowsGeneration != library.generation()) return -1;
     for (size_t i = 0; i < rows.size(); ++i)
         if (rows[i]->key() == key) return (int) i;
     return -1;
@@ -547,7 +548,7 @@ void PresetPanel::selectKey (const juce::String& key)
     selectedKey = key;
     const int row = rowIndexOf (key);
     list.selectRow (row, false);
-    if (onSelectionChanged) onSelectionChanged (row >= 0 ? rows[(size_t) row] : nullptr);
+    if (onSelectionChanged) onSelectionChanged (getRow (row));
 }
 
 juce::String PresetPanel::favouriteKey (const PresetEntry& e) const
@@ -565,7 +566,8 @@ const PresetEntry* PresetPanel::openEntry() const { return findEntry (currentKey
 
 const PresetEntry* PresetPanel::getRow (int row)
 {
-    return juce::isPositiveAndBelow (row, (int) rows.size()) ? rows[(size_t) row] : nullptr;
+    return rowsGeneration == library.generation() && juce::isPositiveAndBelow (row, (int) rows.size())
+             ? rows[(size_t) row] : nullptr;
 }
 
 bool PresetPanel::isRowOpen (const PresetEntry& e)

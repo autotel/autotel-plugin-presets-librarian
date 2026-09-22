@@ -321,7 +321,11 @@ private:
     bool sortAscending = true;
     juce::StringArray favourites;
 
+    /** Pointers into the library: valid only while `rowsGeneration` matches it. A library
+        mutation rescans before the panel refreshes, and anything that lays the list out in
+        between -- closing the popover, say -- would otherwise read freed entries. */
     std::vector<const PresetEntry*> rows;
+    int rowsGeneration = -1;
     /** The selection by key, so it survives a rescan, a re-sort and a refilter. */
     juce::String selectedKey;
 

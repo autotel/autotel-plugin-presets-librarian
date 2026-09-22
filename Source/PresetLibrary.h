@@ -110,6 +110,10 @@ public:
     void rescan();
 
     const std::vector<PresetEntry>& getAll() const { return entries_; }
+    /** Bumped by every rescan -- including the ones inside `renamePreset`, `deletePreset` and
+        `writeEditableCopy`. A pointer from `getAll()` or `getFiltered()` taken under an older
+        generation points into freed storage. */
+    int generation() const { return generation_; }
     std::vector<const PresetEntry*> getFiltered (const PresetFilter&) const;
     juce::StringArray getAllTags() const;
 
@@ -152,6 +156,7 @@ private:
     juce::File presetDir_;
     std::vector<BuiltInPreset> builtIns_;
     std::vector<PresetEntry> entries_;
+    int generation_ = 0;
 };
 
 } // namespace atl

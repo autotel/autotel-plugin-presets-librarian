@@ -21,6 +21,7 @@ void PresetLibrary::setBuiltIns (std::vector<BuiltInPreset> builtIns)
 
 void PresetLibrary::rescan()
 {
+    ++generation_;
     entries_.clear();
     rescanBuiltIns();
     rescanFolder();
