@@ -367,6 +367,8 @@ struct PresetListView::Content : public juce::Component
     {
         if (owner.isShowing()) owner.grabKeyboardFocus();
         pressedRow = -1;
+        // A drag hands the mouse to the drag image, so this row may never see the mouseUp.
+        dragging = false;
         const int row = owner.rowAt (e.y);
         if (row < 0 || owner.model == nullptr) return;
         const auto* entry = owner.model->getRow (row);
@@ -654,7 +656,8 @@ void PresetListView::paintRows (juce::Graphics& g, juce::Rectangle<int> clip)
         for (const auto& [area, tag] : geo.tags)
         {
             const bool filtering = model->isTagFiltering (tag);
-            g.setColour (filtering ? c.accent : c.outline);
+            // The selected row's fill is close to the outline colour, so it is lifted there.
+            g.setColour (filtering ? c.accent : selected ? c.outline.brighter (0.35f) : c.outline);
             g.drawRoundedRectangle (area.toFloat().reduced (0.5f), 9.0f, 1.0f);
             g.setColour (filtering ? pal.accentText : c.textDim);
             g.drawText (tag, area, juce::Justification::centred, false);
@@ -1172,6 +1175,17 @@ bool PresetModal::keyPressed (const juce::KeyPress& k)
         auto fn = cancelAction;   // may delete this
         fn();
         return true;
+    }
+    if (k == juce::KeyPress::returnKey)
+    {
+        // Return is the emphasised button -- which is never the destructive one.
+        for (auto* b : buttons)
+            if (getButtonStyle (*b) == ButtonStyle::accent && b->isEnabled() && b->onClick)
+            {
+                auto fn = b->onClick;
+                fn();
+                return true;
+            }
     }
     return true;   // modal: nothing leaks to the panel underneath
 }

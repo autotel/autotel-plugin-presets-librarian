@@ -68,7 +68,9 @@ struct PresetHost
 
         The default does exactly that with `PresetFile::moveAllPresets` and, only if every file
         moved, `setPresetFolder (dest)` -- on a failure the old folder stays the live one. Override
-        it when a plugin keeps something else in its preset folder that must travel too. */
+        it when a plugin keeps something else in its preset folder that must travel too, or
+        remembers the open preset's path itself: the panel follows the open preset to its new
+        home, but nothing else tells the plugin that the file moved. */
     virtual MigrationResult migratePresetFolder (const juce::File& dest, const PresetFormat& format)
     {
         auto result = PresetFile::moveAllPresets (presetFolder(), dest, format);
@@ -277,8 +279,9 @@ private:
     void deleteNow (PresetEntry);
     void assignTag (const juce::String& tag, const juce::String& key);
 
-    /** What the live patch is called and described as, for a strip, a save or a popover. */
-    PresetMetadata liveMetadata() const;
+    /** What the live patch is called and described as, for a strip, a save or a popover.
+        `askDocument` fills a missing name or author from the live document itself. */
+    PresetMetadata liveMetadata (bool askDocument = false) const;
     juce::String liveName() const;
 
     // ── popover ──────────────────────────────────────────────────────────────

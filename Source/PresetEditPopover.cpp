@@ -369,7 +369,7 @@ void PresetEditPopover::paint (juce::Graphics& g)
     {
         case Mode::edit:        hint = "a name change renames the file on disk"; break;
         case Mode::factoryCopy: hint = "writes an editable copy into your folder"; break;
-        case Mode::liveUnsaved: hint = "names the live patch -- save writes it into your folder"; break;
+        case Mode::liveUnsaved: hint = juce::String (juce::CharPointer_UTF8 ("names the live patch \xe2\x80\x94 save writes it into your folder")); break;
         case Mode::saveAs:      hint = "writes a new file into your folder"; break;
     }
     g.setFont (PanelFonts::sans (11.0f));

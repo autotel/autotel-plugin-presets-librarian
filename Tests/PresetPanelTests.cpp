@@ -441,6 +441,97 @@ struct PresetPanelTests : juce::UnitTest
 
 static PresetPanelTests presetPanelTests;
 
+/** The status bar's, not the popover's apply -- which says "save as" too while it is saving as. */
+juce::TextButton* saveAsButton (PresetPanel& panel)
+{
+    return find<juce::TextButton> (panel, [&panel] (juce::TextButton& b)
+        { return b.getButtonText() == "save as" && b.getParentComponent() == &panel; });
+}
+
+/** The keyboard, and save as: the paths that pick a name or a row without a mouse. */
+struct PresetPanelSaveAsTests : juce::UnitTest
+{
+    PresetPanelSaveAsTests() : juce::UnitTest ("atl::PresetPanel save as", "presets") {}
+
+    void runTest() override
+    {
+        const auto format = testFormat();
+        auto tempDir = freshDir ("atl-presetpanel-saveas");
+        for (auto name : { "a", "b" })
+            PresetFile::save (tempDir.getChildFile (juce::String (name) + format.extension), makeDocument(),
+                              makeMeta(), format);
+
+        RecordingHost host;
+        host.folder = tempDir;
+        PresetPanel panel (host, format);
+        panel.setSize (1000, 700);
+        auto* list = find<PresetListView> (panel);
+        if (list == nullptr) { expect (false); return; }
+
+        beginTest ("arrow keys move the selection and load nothing");
+        {
+            list->keyPressed (juce::KeyPress (juce::KeyPress::downKey));
+            expectEquals (list->getSelectedRow(), 0);
+            list->keyPressed (juce::KeyPress (juce::KeyPress::downKey));
+            expectEquals (list->getSelectedRow(), 1);
+            list->keyPressed (juce::KeyPress (juce::KeyPress::downKey));
+            expectEquals (list->getSelectedRow(), 1, "the last row stays selected");
+            expectEquals (host.loadedCount, 0);
+        }
+
+        beginTest ("F2 opens the popover on the selection; Escape closes it");
+        {
+            list->keyPressed (juce::KeyPress (juce::KeyPress::F2Key));
+            expectEquals (list->getPopoverRow(), 1);
+            list->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+            expect (! list->isPopoverShowing());
+        }
+
+        beginTest ("save as suggests a free name and writes a new file");
+        {
+            list->selectRow (0);
+            list->loadButton.onClick();   // "a" is open
+
+            saveAsButton (panel)->onClick();
+            auto* popover = find<PresetEditPopover> (panel);
+            if (popover == nullptr) { expect (false); return; }
+            expect (popover->getMode() == PresetEditPopover::Mode::saveAs);
+            expectEquals (popover->nameEditor.getText(), juce::String ("a 2"));
+
+            popover->applyButton.onClick();
+            expect (tempDir.getChildFile ("a 2" + format.extension).existsAsFile());
+            expectEquals (host.lastFile.getFileNameWithoutExtension(), juce::String ("a 2"));
+        }
+
+        beginTest ("save as over an existing file asks first, and Return is not destruction");
+        {
+            saveAsButton (panel)->onClick();
+            auto* popover = find<PresetEditPopover> (panel);
+            popover->nameEditor.setText ("b", false);
+            const int saves = host.savedCount;
+            popover->applyButton.onClick();
+
+            auto* modal = findModal (panel);
+            expect (modal != nullptr, "replacing a file is asked about");
+            expectEquals (host.savedCount, saves);
+            if (modal == nullptr) return;
+
+            // The only emphasised-looking button in a replace dialog would be the destructive one,
+            // so there is none, and Return does nothing.
+            modal->keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+            expectEquals (host.savedCount, saves);
+
+            modal->findButton ("replace")->onClick();
+            expectEquals (host.savedCount, saves + 1);
+            expectEquals (host.lastFile.getFileNameWithoutExtension(), juce::String ("b"));
+        }
+
+        tempDir.deleteRecursively();
+    }
+};
+
+static PresetPanelSaveAsTests presetPanelSaveAsTests;
+
 /** Built-ins in the panel: listed, loadable, never written to -- editing one writes a copy. */
 struct PresetPanelBuiltInTests : juce::UnitTest
 {

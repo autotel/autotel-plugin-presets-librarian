@@ -658,6 +658,7 @@ void PresetPanel::deleteNow (PresetEntry entry)
 {
     juce::String err;
     const auto favourite = favouriteKey (entry);
+    const auto liveBefore = liveMetadata();   // read while the file is still there to read it from
     if (! library.deletePreset (entry, err))
     {
         showError (err);
@@ -668,7 +669,7 @@ void PresetPanel::deleteNow (PresetEntry entry)
     {
         // Its on-disk identity is gone, but the live patch is not: it keeps the name, so the
         // strip still says what it is and the next save writes it back.
-        pendingLiveMeta = liveMetadata();
+        pendingLiveMeta = liveBefore;
         currentFile = juce::File();
         currentKey = {};
     }
@@ -782,7 +783,7 @@ void PresetPanel::assignTag (const juce::String& tag, const juce::String& key)
 
 // ── the live patch ──────────────────────────────────────────────────────────
 
-PresetMetadata PresetPanel::liveMetadata() const
+PresetMetadata PresetPanel::liveMetadata (bool askDocument) const
 {
     PresetMetadata m;
     if (const auto* e = openEntry(); e != nullptr)
@@ -795,7 +796,9 @@ PresetMetadata PresetPanel::liveMetadata() const
         m = pendingLiveMeta;
     }
 
-    if (m.name.isEmpty() || m.author.isEmpty())
+    // Serialising the live document can be expensive, so it is only asked for its name and author
+    // when something is about to be written or edited -- never to repaint a strip.
+    if (askDocument && (m.name.isEmpty() || m.author.isEmpty()))
     {
         const auto doc = host.captureDocument();
         if (m.name.isEmpty())   m.name = doc.getProperty (format.nameProperty, "").toString();
@@ -839,7 +842,7 @@ void PresetPanel::refreshLiveStrip()
     liveStrip.saveButton.setTooltip (liveHasFile()
         ? "write the live patch back to " + currentFile.getFileName()
         : "write the live patch into your folder as "
-              + quoted (PresetFile::sanitiseFilename (liveMetadata().name) + format.extension));
+              + quoted (PresetFile::sanitiseFilename (liveName()) + format.extension));
 }
 
 // ── loading ─────────────────────────────────────────────────────────────────
@@ -967,7 +970,7 @@ bool PresetPanel::writeLiveTo (const juce::File& file, PresetMetadata meta)
 
 bool PresetPanel::doSave()
 {
-    auto meta = liveMetadata();
+    auto meta = liveMetadata (true);
 
     if (liveHasFile())
         return writeLiveTo (currentFile, meta);
@@ -990,7 +993,7 @@ void PresetPanel::doSaveAs()
 
     // Save as asks for the name where every other name is asked for: in the popover, under the
     // live strip. The suggestion is the live name, moved on to the next free one.
-    auto meta = liveMetadata();
+    auto meta = liveMetadata (true);
     const auto folder = host.presetFolder();
     meta.name = PresetFile::resolveCollision (folder, PresetFile::sanitiseFilename (meta.name), format)
                     .getFileNameWithoutExtension();
@@ -1099,7 +1102,7 @@ void PresetPanel::openEditorForLive()
     const auto name = liveName();
     popover.setHeader (nullptr, 0);
     popover.open ("editing live patch", name.isNotEmpty() ? name : juce::String ("new patch"),
-                  liveMetadata(), library.getAllTags(), mode, true);
+                  liveMetadata (true), library.getAllTags(), mode, true);
     list.showPopoverForLive();
     popover.focusName();
 }
