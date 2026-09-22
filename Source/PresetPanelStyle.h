@@ -49,6 +49,7 @@ struct PanelPalette
     juce::Colour accentLight;    // accent used as text on dark
     juce::Colour onAccent;       // text on a solid accent button
     juce::Colour textFaint;      // hints, counts
+    juce::Colour starOff;        // an empty favourite star
     juce::Colour disabledText;
     juce::Colour disabledFill;
     juce::Colour warningFill, warningOutline;

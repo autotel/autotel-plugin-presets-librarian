@@ -625,7 +625,7 @@ void PresetListView::paintRows (juce::Graphics& g, juce::Rectangle<int> clip)
 
         const bool fav = model->isRowFavourite (*e);
         g.setFont (PanelFonts::sans (13.0f));
-        g.setColour (fav ? c.favourite : c.outline.brighter (0.2f));
+        g.setColour (fav ? c.favourite : pal.starOff);
         g.drawText (fav ? juce::String (juce::CharPointer_UTF8 ("\xe2\x98\x85"))
                         : juce::String (juce::CharPointer_UTF8 ("\xe2\x98\x86")),
                     geo.star, juce::Justification::centred, false);

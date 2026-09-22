@@ -23,11 +23,19 @@ PanelPalette PanelPalette::from (const PresetPanelColours& c)
     PanelPalette p;
     p.base = c;
 
+    // The derivations were written for a dark panel, and the ones that push toward black or white
+    // did so by assumption. On a light palette that put dark text on the accent button, a black
+    // slab under the search text and an invisible empty star, so those follow the background's
+    // polarity. A dark palette derives exactly what it did.
+    const bool light = c.background.getPerceivedBrightness() > 0.5f;
+    const auto ink   = juce::Colours::black;
+
     p.bar          = c.background.interpolatedWith (c.panel, 0.4f);
     p.rail         = c.background.interpolatedWith (c.panel, 0.25f);
     p.divider      = c.panel.interpolatedWith (c.outline, 0.5f);
     p.rowDivider   = c.background.interpolatedWith (c.panel, 0.9f);
-    p.field        = c.background.darker (0.25f);
+    p.field        = light ? c.background.interpolatedWith (juce::Colours::white, 0.6f)
+                           : c.background.darker (0.25f);
     p.button       = c.panel.interpolatedWith (c.outline, 0.17f);
     p.buttonHover  = c.panel.interpolatedWith (c.outline, 0.5f);
     p.card         = c.panel.interpolatedWith (c.outline, 0.12f);
@@ -36,18 +44,23 @@ PanelPalette PanelPalette::from (const PresetPanelColours& c)
     p.rowSelected  = c.panel.interpolatedWith (c.accent, 0.06f).brighter (0.05f);
     p.liveStrip    = c.background.interpolatedWith (c.accent, 0.07f);
     p.accentFill   = c.background.interpolatedWith (c.accent, 0.14f);
-    p.accentText   = c.accent.interpolatedWith (juce::Colours::white, 0.75f);
-    p.accentLight  = c.accent.interpolatedWith (juce::Colours::white, 0.3f);
-    p.onAccent     = c.background.darker (0.4f);
+    p.accentText   = light ? c.accent.interpolatedWith (ink, 0.35f)
+                           : c.accent.interpolatedWith (juce::Colours::white, 0.75f);
+    p.accentLight  = light ? c.accent.interpolatedWith (ink, 0.25f)
+                           : c.accent.interpolatedWith (juce::Colours::white, 0.3f);
+    p.onAccent     = ! light ? c.background.darker (0.4f)
+                   : c.accent.getPerceivedBrightness() > 0.6f ? c.text : juce::Colours::white;
     p.textFaint    = c.textDim.interpolatedWith (c.background, 0.3f);
     p.disabledText = c.textDim.interpolatedWith (c.background, 0.5f);
+    p.starOff      = light ? p.textFaint : c.outline.brighter (0.2f);   // brightening an outline is invisible on light
     p.disabledFill = c.background.interpolatedWith (c.panel, 0.4f);
     p.warningFill    = c.background.interpolatedWith (c.warning, 0.1f);
     p.warningOutline = c.background.interpolatedWith (c.warning, 0.38f);
     p.dangerFill     = c.background.interpolatedWith (juce::Colour (0xffa04040), 0.3f);
     p.dangerOutline  = c.background.interpolatedWith (juce::Colour (0xffc05050), 0.5f);
-    p.dangerStrong   = c.danger.interpolatedWith (juce::Colours::white, 0.4f);
-    p.scrim          = c.background.darker (0.5f).withAlpha (0.68f);
+    p.dangerStrong   = light ? c.danger.interpolatedWith (ink, 0.2f)
+                             : c.danger.interpolatedWith (juce::Colours::white, 0.4f);
+    p.scrim          = light ? ink.withAlpha (0.3f) : c.background.darker (0.5f).withAlpha (0.68f);
     return p;
 }
 
