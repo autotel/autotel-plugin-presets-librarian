@@ -1,0 +1,3 @@
+- Whenever saving new patches, author name should be auto-filled with the last saved patches' author name.
+- Casing should be ignored when typing tags.
+- The tags input mechanism works well, but when typing a comma into the tags input, may the typed tags be separated by commas 
