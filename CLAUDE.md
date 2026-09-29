@@ -2,7 +2,7 @@
 
 Shared preset librarian for the Autotel JUCE plugins: file format (`PresetFile`), folder scanner
 (`PresetLibrary`), and the librarian panel (`PresetPanel` + `PresetPanelStyle`/`Views`,
-`PresetEditPopover`). `README.md` is the design and the API; `Presets librarian redesign/SPEC.md`
+`PresetEditPopover`). `README.md` is the design and the API; the redesign spec (`git show 0dc1c1e:"Presets librarian redesign/SPEC.md"`)
 is the panel's visual spec. Read the README's three rules before changing behaviour.
 
 ## Build and verify
