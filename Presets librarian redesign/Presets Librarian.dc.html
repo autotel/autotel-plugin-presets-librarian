@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #161618; }
+  * { box-sizing: border-box; }
+  a { color: #4aa3ff; text-decoration: none; }
+  a:hover { color: #7cbcff; }
+  input, textarea, button { font-family: inherit; }
+  ::selection { background: #4aa3ff; color: #101013; }
+  [data-scroll]::-webkit-scrollbar { width: 10px; height: 10px; }
+  [data-scroll]::-webkit-scrollbar-thumb { background: #34343a; border-radius: 6px; border: 3px solid #1a1a1c; }
+  [data-scroll]::-webkit-scrollbar-track { background: transparent; }
+</style>
+</helmet>
+
+<div style="position:relative;display:flex;flex-direction:column;min-width:900px;height:100%;min-height:600px;background:#1a1a1c;color:#e4e4e8;font-family:'IBM Plex Sans',Helvetica,sans-serif;font-size:13px;line-height:1.35;overflow:hidden">
+
+  <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #2c2c31;background:#1e1e21">
+    <span style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#9b9ba3">presets</span>
+    <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9b9ba3" title="preset folder">{{ folder }}</span>
+    <button onClick="{{ chooseFolder }}" style="padding:5px 10px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer" style-hover="background:#2f2f35">folder…</button>
+    <button onClick="{{ openMigrate }}" style="padding:5px 10px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer" style-hover="background:#2f2f35">migrate…</button>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #2c2c31">
+    <input value="{{ q }}" onChange="{{ onQuery }}" placeholder="filter name, author, comment…" style="flex:1;min-width:120px;padding:6px 9px;border:1px solid #3a3a40;border-radius:3px;background:#141416;color:#e4e4e8;font-size:12.5px;outline:none" style-focus="border-color:#4aa3ff" />
+    <div style="display:flex;border:1px solid #3a3a40;border-radius:3px;overflow:hidden">
+      <button onClick="{{ toggleBuiltIn }}" style="{{ builtInStyle }}">built-in</button>
+      <button onClick="{{ toggleUser }}" style="{{ userStyle }}">mine</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:0;border:1px solid #3a3a40;border-radius:3px;background:#26262a;overflow:hidden">
+      <select value="{{ sort }}" onChange="{{ onSort }}" style="padding:6px 6px 6px 9px;border:none;background:transparent;color:#e4e4e8;font-size:12px;cursor:pointer;outline:none" title="sort the list">
+        <option value="name">name</option>
+        <option value="date">date modified</option>
+        <option value="author">author</option>
+        <option value="tag">first tag</option>
+        <option value="favourite">favourites first</option>
+        <option value="source">factory / mine</option>
+      </select>
+      <button onClick="{{ toggleSortDir }}" style="padding:6px 9px;border:none;border-left:1px solid #3a3a40;background:transparent;color:#9b9ba3;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer" style-hover="color:#e4e4e8" title="{{ sortDirTitle }}">{{ sortDirLabel }}</button>
+    </div>
+    <button onClick="{{ rescan }}" style="padding:6px 10px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer" style-hover="background:#2f2f35">refresh</button>
+  </div>
+
+  <sc-if value="{{ hasFilterTags }}" hint-placeholder-val="{{ true }}">
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:7px 12px;border-bottom:1px solid #2c2c31;background:#1c1c1f">
+      <span style="font-size:11px;color:#9b9ba3">filtering by</span>
+      <sc-for list="{{ filterChips }}" as="chip" hint-placeholder-count="2">
+        <button onClick="{{ chip.onRemove }}" style="display:flex;align-items:center;gap:6px;padding:3px 7px;border:1px solid #4aa3ff;border-radius:11px;background:#1d2a3a;color:#cfe4ff;font-size:11.5px;cursor:pointer" title="remove this tag filter">{{ chip.label }}<span style="color:#7cbcff">×</span></button>
+      </sc-for>
+      <button onClick="{{ toggleTagMode }}" style="padding:3px 8px;border:1px solid #3a3a40;border-radius:11px;background:#26262a;color:#9b9ba3;font-size:11px;cursor:pointer" style-hover="color:#e4e4e8" title="match all selected tags, or any of them">{{ tagModeLabel }}</button>
+      <button onClick="{{ clearTags }}" style="padding:3px 8px;border:1px solid transparent;border-radius:11px;background:transparent;color:#9b9ba3;font-size:11px;cursor:pointer" style-hover="color:#e4e4e8">clear</button>
+    </div>
+  </sc-if>
+
+  <div style="display:flex;flex:1;min-height:0">
+
+    <sc-if value="{{ railOn }}" hint-placeholder-val="{{ true }}">
+      <div data-scroll="" style="width:176px;flex:none;border-right:1px solid #2c2c31;overflow-y:auto;background:#1c1c1f">
+        <div style="padding:9px 12px 6px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#76767e">tags</div>
+        <sc-for list="{{ rail }}" as="t" hint-placeholder-count="6">
+          <div onClick="{{ t.onClick }}" onDragOver="{{ t.onDragOver }}" onDragLeave="{{ t.onDragLeave }}" onDrop="{{ t.onDrop }}" style="{{ t.style }}" title="click to filter · drop a preset here to tag it">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.label }}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#76767e">{{ t.count }}</span>
+          </div>
+        </sc-for>
+        <div style="padding:10px 12px;font-size:11px;color:#6d6d75;line-height:1.5">drag a preset onto a tag to assign it</div>
+      </div>
+    </sc-if>
+
+    <div data-scroll="" style="flex:1;min-width:0;overflow-y:auto">
+      <div style="position:sticky;top:0;z-index:6;display:flex;align-items:center;gap:9px;padding:8px 12px;border-bottom:1px solid #2c2c31;border-left:2px solid #4aa3ff;background:#20242b">
+        <span style="flex:none;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:#7cbcff">live patch</span>
+        <span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ liveName }}</span>
+        <sc-if value="{{ liveIsFile }}" hint-placeholder-val="{{ true }}">
+          <span style="flex:none;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9b9ba3">{{ liveMeta }}</span>
+        </sc-if>
+        <button onClick="{{ toggleDirty }}" style="{{ dirtyStyle }}" title="state of the live patch — click to simulate editing it">{{ dirtyLabel }}</button>
+        <span style="flex:1"></span>
+        <button onClick="{{ openEditLive }}" style="{{ liveEditStyle }}" title="name, comment, tags of the open preset">edit…</button>
+        <button onClick="{{ doSave }}" style="{{ saveStyle }}">save</button>
+        <button onClick="{{ doRevert }}" style="{{ revertStyle }}" title="re-read the open preset from disk">revert to disk</button>
+      </div>
+
+      <sc-if value="{{ liveEditing }}">
+        <div style="position:relative;z-index:5;margin:10px 12px 14px;padding:14px;border:1px solid #43434a;border-radius:4px;background:#25252a;box-shadow:0 14px 34px rgba(0,0,0,.45)">
+          <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:12px">
+            <span style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#7cbcff">editing live patch</span>
+            <span style="font-weight:500">{{ liveName }}</span>
+            <span style="flex:1"></span>
+            <button onClick="{{ cancelEdit }}" style="padding:2px 6px;border:none;background:transparent;color:#9b9ba3;font-size:14px;cursor:pointer" style-hover="color:#e4e4e8" title="close">×</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 14px">
+            <label style="display:block">
+              <span style="display:block;margin-bottom:4px;font-size:11px;color:#9b9ba3">file name</span>
+              <span style="display:flex;align-items:center;gap:6px">
+                <input value="{{ draft.name }}" onChange="{{ onDraftName }}" style="flex:1;min-width:0;padding:6px 8px;border:1px solid #3a3a40;border-radius:3px;background:#141416;color:#e4e4e8;font-size:12.5px;outline:none" style-focus="border-color:#4aa3ff" />
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#76767e">.mepsynth</span>
+              </span>
+            </label>
+            <label style="display:block">
+              <span style="display:block;margin-bottom:4px;font-size:11px;color:#9b9ba3">author</span>
+              <input value="{{ draft.author }}" onChange="{{ onDraftAuthor }}" style="width:100%;padding:6px 8px;border:1px solid #3a3a40;border-radius:3px;background:#141416;color:#e4e4e8;font-size:12.5px;outline:none" style-focus="border-color:#4aa3ff" />
+            </label>
+            <label style="display:block;grid-column:1 / -1">
+              <span style="display:block;margin-bottom:4px;font-size:11px;color:#9b9ba3">comment · shown in the list, never part of the name</span>
+              <input value="{{ draft.comment }}" onChange="{{ onDraftComment }}" style="width:100%;padding:6px 8px;border:1px solid #3a3a40;border-radius:3px;background:#141416;color:#e4e4e8;font-size:12.5px;outline:none" style-focus="border-color:#4aa3ff" />
+            </label>
+            <label style="display:block;grid-column:1 / -1">
+              <span style="display:block;margin-bottom:4px;font-size:11px;color:#9b9ba3">description</span>
+              <textarea value="{{ draft.description }}" onChange="{{ onDraftDescription }}" rows="2" style="width:100%;padding:6px 8px;border:1px solid #3a3a40;border-radius:3px;background:#141416;color:#e4e4e8;font-size:12.5px;line-height:1.4;resize:vertical;outline:none" style-focus="border-color:#4aa3ff"></textarea>
+            </label>
+            <div style="grid-column:1 / -1">
+              <span style="display:block;margin-bottom:5px;font-size:11px;color:#9b9ba3">tags</span>
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">
+                <sc-for list="{{ draftTags }}" as="dt" hint-placeholder-count="2">
+                  <button onClick="{{ dt.onRemove }}" style="display:flex;align-items:center;gap:6px;padding:3px 7px;border:1px solid #4a4a52;border-radius:11px;background:#2e2e34;color:#e4e4e8;font-size:11.5px;cursor:pointer" style-hover="border-color:#6d6d75">{{ dt.label }}<span style="color:#9b9ba3">×</span></button>
+                </sc-for>
+                <input value="{{ tagInput }}" onChange="{{ onTagInput }}" onKeyDown="{{ onTagKey }}" placeholder="type to add or create…" style="flex:1;min-width:150px;padding:5px 8px;border:1px solid #3a3a40;border-radius:11px;background:#141416;color:#e4e4e8;font-size:11.5px;outline:none" style-focus="border-color:#4aa3ff" />
+              </div>
+              <sc-if value="{{ hasSuggestions }}">
+                <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px">
+                  <sc-for list="{{ suggestions }}" as="sg" hint-placeholder-count="3">
+                    <button onClick="{{ sg.onAdd }}" style="padding:3px 7px;border:1px dashed #4a4a52;border-radius:11px;background:transparent;color:#9b9ba3;font-size:11.5px;cursor:pointer" style-hover="color:#e4e4e8;border-color:#6d6d75">{{ sg.label }}</button>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid #34343a">
+            <button onClick="{{ applyEdit }}" style="padding:6px 13px;border:1px solid transparent;border-radius:3px;background:#4aa3ff;color:#101013;font-size:12px;font-weight:500;cursor:pointer" style-hover="background:#6bb4ff">apply</button>
+            <button onClick="{{ cancelEdit }}" style="padding:6px 11px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer" style-hover="background:#2f2f35">cancel</button>
+            <span style="font-size:11px;color:#76767e">{{ applyHint }}</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-for list="{{ rows }}" as="row" hint-placeholder-count="7">
+        <div style="position:relative;border-bottom:1px solid #26262a">
+          <div draggable="true" onDragStart="{{ row.onDragStart }}" onDragEnd="{{ row.onDragEnd }}" onClick="{{ row.onSelect }}" onDoubleClick="{{ row.onLoad }}" style="{{ row.style }}" style-hover="background:#212125">
+            <div style="display:flex;align-items:center;gap:9px;min-width:0">
+              <button onClick="{{ row.onStar }}" style="{{ row.starStyle }}" title="favourite">{{ row.star }}</button>
+              <span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.name }}</span>
+              <sc-if value="{{ row.builtIn }}">
+                <span style="flex:none;padding:1px 5px;border:1px solid #3a3a40;border-radius:2px;font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#9b9ba3">factory</span>
+              </sc-if>
+              <sc-if value="{{ row.isOpen }}">
+                <span style="flex:none;padding:1px 5px;border-radius:2px;background:#1d2a3a;font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#7cbcff">open</span>
+              </sc-if>
+              <div style="display:flex;gap:4px;min-width:0">
+                <sc-for list="{{ row.tags }}" as="tg" hint-placeholder-count="2">
+                  <button onClick="{{ tg.onClick }}" style="{{ tg.style }}" title="filter by this tag">{{ tg.label }}</button>
+                </sc-for>
+              </div>
+              <span style="flex:1"></span>
+              <span style="flex:none;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9b9ba3">{{ row.meta }}</span>
+            </div>
+            <sc-if value="{{ row.showComment }}">
+              <div style="margin:3px 0 0 27px;font-size:11.5px;color:#84848c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.comment }}</div>
+            </sc-if>
+            <sc-if value="{{ row.selected }}">
+              <div style="display:flex;align-items:center;gap:6px;margin:8px 0 2px 27px">
+                <button onClick="{{ row.onLoad }}" style="padding:5px 12px;border:1px solid transparent;border-radius:3px;background:#4aa3ff;color:#101013;font-size:12px;font-weight:500;cursor:pointer" style-hover="background:#6bb4ff">load</button>
+                <button onClick="{{ row.onEdit }}" style="{{ row.editBtnStyle }}">edit…</button>
+                <button onClick="{{ row.onDuplicate }}" style="padding:5px 10px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer" style-hover="background:#2f2f35">duplicate</button>
+                <button onClick="{{ row.onDelete }}" style="{{ row.deleteBtnStyle }}">delete</button>
+                <span style="font-size:11px;color:#76767e">{{ row.hint }}</span>
+              </div>
+            </sc-if>
+          </div>
+
+          <sc-if value="{{ row.editing }}">
+            <div style="position:relative;z-index:5;margin:0 12px 12px 27px;padding:14px;border:1px solid #43434a;border-radius:4px;background:#25252a;box-shadow:0 14px 34px rgba(0,0,0,.45)">
+              <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:12px">
+                <span style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#9b9ba3">editing</span>
+                <span style="font-weight:500">{{ row.name }}</span>
+                <span style="flex:1"></span>
+                <button onClick="{{ cancelEdit }}" style="padding:2px 6px;border:none;background:transparent;color:#9b9ba3;font-size:14px;cursor:pointer" style-hover="color:#e4e4e8" title="close">×</button>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 14px">
+                <label style="display:block">
+                  <span style="display:block;margin-bottom:4px;font-size:11px;color:#9b9ba3">file name</span>
+                  <span style="display:flex;align-items:center;gap:6px">
+                    <input value="{{ draft.name }}" onChange="{{ onDraftName }}" style="flex:1;min-width:0;padding:6px 8px;border:1px solid #3a3a40;border-radius:3px;background:#141416;color:#e4e4e8;font-size:12.5px;outline:none" style-focus="border-color:#4aa3ff" />
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#76767e">.mepsynth</span>
+                  </span>
+                </label>
+                <label style="display:block">
+                  <span style="display:block;margin-bottom:4px;font-size:11px;color:#9b9ba3">author</span>
+                  <input value="{{ draft.author }}" onChange="{{ onDraftAuthor }}" style="width:100%;padding:6px 8px;border:1px solid #3a3a40;border-radius:3px;background:#141416;color:#e4e4e8;font-size:12.5px;outline:none" style-focus="border-color:#4aa3ff" />
+                </label>
+                <label style="display:block;grid-column:1 / -1">
+                  <span style="display:block;margin-bottom:4px;font-size:11px;color:#9b9ba3">comment · shown in the list, never part of the name</span>
+                  <input value="{{ draft.comment }}" onChange="{{ onDraftComment }}" style="width:100%;padding:6px 8px;border:1px solid #3a3a40;border-radius:3px;background:#141416;color:#e4e4e8;font-size:12.5px;outline:none" style-focus="border-color:#4aa3ff" />
+                </label>
+                <label style="display:block;grid-column:1 / -1">
+                  <span style="display:block;margin-bottom:4px;font-size:11px;color:#9b9ba3">description</span>
+                  <textarea value="{{ draft.description }}" onChange="{{ onDraftDescription }}" rows="2" style="width:100%;padding:6px 8px;border:1px solid #3a3a40;border-radius:3px;background:#141416;color:#e4e4e8;font-size:12.5px;line-height:1.4;resize:vertical;outline:none" style-focus="border-color:#4aa3ff"></textarea>
+                </label>
+                <div style="grid-column:1 / -1">
+                  <span style="display:block;margin-bottom:5px;font-size:11px;color:#9b9ba3">tags</span>
+                  <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">
+                    <sc-for list="{{ draftTags }}" as="dt" hint-placeholder-count="2">
+                      <button onClick="{{ dt.onRemove }}" style="display:flex;align-items:center;gap:6px;padding:3px 7px;border:1px solid #4a4a52;border-radius:11px;background:#2e2e34;color:#e4e4e8;font-size:11.5px;cursor:pointer" style-hover="border-color:#6d6d75">{{ dt.label }}<span style="color:#9b9ba3">×</span></button>
+                    </sc-for>
+                    <input value="{{ tagInput }}" onChange="{{ onTagInput }}" onKeyDown="{{ onTagKey }}" placeholder="type to add or create…" style="flex:1;min-width:150px;padding:5px 8px;border:1px solid #3a3a40;border-radius:11px;background:#141416;color:#e4e4e8;font-size:11.5px;outline:none" style-focus="border-color:#4aa3ff" />
+                  </div>
+                  <sc-if value="{{ hasSuggestions }}">
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px">
+                      <sc-for list="{{ suggestions }}" as="sg" hint-placeholder-count="3">
+                        <button onClick="{{ sg.onAdd }}" style="padding:3px 7px;border:1px dashed #4a4a52;border-radius:11px;background:transparent;color:#9b9ba3;font-size:11.5px;cursor:pointer" style-hover="color:#e4e4e8;border-color:#6d6d75">{{ sg.label }}</button>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid #34343a">
+                <button onClick="{{ applyEdit }}" style="padding:6px 13px;border:1px solid transparent;border-radius:3px;background:#4aa3ff;color:#101013;font-size:12px;font-weight:500;cursor:pointer" style-hover="background:#6bb4ff">apply</button>
+                <button onClick="{{ cancelEdit }}" style="padding:6px 11px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer" style-hover="background:#2f2f35">cancel</button>
+                <span style="font-size:11px;color:#76767e">{{ applyHint }}</span>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+
+      <sc-if value="{{ empty }}">
+        <div style="padding:40px 16px;text-align:center;font-size:12.5px;color:#76767e">no preset matches the filter</div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid #2c2c31;background:#1e1e21">
+    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9b9ba3">{{ status }}</span>
+    <span style="flex:1"></span>
+    <button onClick="{{ doNew }}" style="padding:5px 10px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer" style-hover="background:#2f2f35">new</button>
+    <button onClick="{{ doSaveAs }}" style="padding:5px 10px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer" style-hover="background:#2f2f35">save as</button>
+  </div>
+
+  <sc-if value="{{ guardOpen }}">
+    <div style="position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(12,12,14,.68)">
+      <div style="width:460px;max-width:calc(100% - 32px);padding:18px;border:1px solid #43434a;border-radius:4px;background:#25252a;box-shadow:0 22px 60px rgba(0,0,0,.55)">
+        <div style="margin-bottom:8px;font-size:14px;font-weight:600">{{ guardTitle }}</div>
+        <div style="margin-bottom:16px;font-size:12.5px;line-height:1.5;color:#b9b9c1">{{ guardBody }}</div>
+        <div style="display:flex;gap:8px">
+          <button onClick="{{ guardSaveThenLoad }}" style="padding:6px 13px;border:1px solid transparent;border-radius:3px;background:#4aa3ff;color:#101013;font-size:12px;font-weight:500;cursor:pointer" style-hover="background:#6bb4ff">save, then load</button>
+          <button onClick="{{ guardLoadAnyway }}" style="padding:6px 11px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer" style-hover="background:#2f2f35">load anyway</button>
+          <span style="flex:1"></span>
+          <button onClick="{{ closeDialog }}" style="padding:6px 11px;border:1px solid transparent;border-radius:3px;background:transparent;color:#9b9ba3;font-size:12px;cursor:pointer" style-hover="color:#e4e4e8">cancel</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ deleteOpen }}">
+    <div style="position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(12,12,14,.68)">
+      <div style="width:440px;max-width:calc(100% - 32px);padding:18px;border:1px solid #43434a;border-radius:4px;background:#25252a;box-shadow:0 22px 60px rgba(0,0,0,.55)">
+        <div style="margin-bottom:8px;font-size:14px;font-weight:600">{{ deleteTitle }}</div>
+        <div style="margin-bottom:16px;font-size:12.5px;line-height:1.5;color:#b9b9c1">Moved to the system trash, not erased.</div>
+        <div style="display:flex;gap:8px">
+          <button onClick="{{ confirmDelete }}" style="padding:6px 13px;border:1px solid #6b3a3a;border-radius:3px;background:#3a2222;color:#ffc9c9;font-size:12px;font-weight:500;cursor:pointer" style-hover="background:#4a2a2a">delete</button>
+          <span style="flex:1"></span>
+          <button onClick="{{ closeDialog }}" style="padding:6px 11px;border:1px solid transparent;border-radius:3px;background:transparent;color:#9b9ba3;font-size:12px;cursor:pointer" style-hover="color:#e4e4e8">cancel</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ migrateOpen }}">
+    <div style="position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(12,12,14,.68)">
+      <div style="width:540px;max-width:calc(100% - 32px);padding:18px;border:1px solid #43434a;border-radius:4px;background:#25252a;box-shadow:0 22px 60px rgba(0,0,0,.55)">
+        <div style="margin-bottom:14px;font-size:14px;font-weight:600">Migrate preset folder</div>
+        <div style="margin-bottom:5px;font-size:11px;color:#9b9ba3">from</div>
+        <div style="margin-bottom:14px;padding:6px 8px;border:1px solid #34343a;border-radius:3px;background:#1b1b1e;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#b9b9c1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ folder }}</div>
+        <div style="margin-bottom:5px;font-size:11px;color:#9b9ba3">to</div>
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <input value="{{ dest }}" onChange="{{ onDest }}" placeholder="choose a destination folder…" style="flex:1;min-width:0;padding:6px 8px;border:1px solid #3a3a40;border-radius:3px;background:#141416;color:#e4e4e8;font-family:'IBM Plex Mono',monospace;font-size:11.5px;outline:none" style-focus="border-color:#4aa3ff" />
+          <button onClick="{{ chooseDest }}" style="padding:6px 11px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer;white-space:nowrap" style-hover="background:#2f2f35">browse…</button>
+        </div>
+        <div style="margin-bottom:16px;padding:10px 12px;border:1px solid #34343a;border-radius:3px;background:#1b1b1e;font-size:12px;line-height:1.55;color:#b9b9c1">{{ migrateSummary }}</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button onClick="{{ runMigrate }}" style="{{ migrateBtnStyle }}">move presets</button>
+          <span style="flex:1"></span>
+          <button onClick="{{ closeDialog }}" style="padding:6px 11px;border:1px solid transparent;border-radius:3px;background:transparent;color:#9b9ba3;font-size:12px;cursor:pointer" style-hover="color:#e4e4e8">cancel</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ migrateDoneOpen }}">
+    <div style="position:absolute;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(12,12,14,.68)">
+      <div style="width:500px;max-width:calc(100% - 32px);padding:18px;border:1px solid #43434a;border-radius:4px;background:#25252a;box-shadow:0 22px 60px rgba(0,0,0,.55)">
+        <div style="margin-bottom:8px;font-size:14px;font-weight:600">{{ migrateDoneTitle }}</div>
+        <div style="margin-bottom:6px;font-size:12.5px;line-height:1.5;color:#b9b9c1">The library now points at the new folder. Delete the old one?</div>
+        <div style="margin-bottom:16px;padding:6px 8px;border:1px solid #34343a;border-radius:3px;background:#1b1b1e;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9b9ba3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ oldFolder }}</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button onClick="{{ keepOldFolder }}" style="padding:6px 13px;border:1px solid transparent;border-radius:3px;background:#4aa3ff;color:#101013;font-size:12px;font-weight:500;cursor:pointer" style-hover="background:#6bb4ff">keep it</button>
+          <button onClick="{{ deleteOldFolder }}" style="padding:6px 11px;border:1px solid #6b3a3a;border-radius:3px;background:#3a2222;color:#ffc9c9;font-size:12px;cursor:pointer" style-hover="background:#4a2a2a">delete old folder</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1120,&quot;height&quot;:700},&quot;showTagRail&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;showComments&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Layout&quot;},&quot;loadGuard&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dirty&quot;,&quot;always&quot;,&quot;none&quot;],&quot;default&quot;:&quot;dirty&quot;,&quot;tsType&quot;:&quot;\&quot;dirty\&quot; | \&quot;always\&quot; | \&quot;none\&quot;&quot;,&quot;section&quot;:&quot;Behaviour&quot;},&quot;confirmDelete&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Behaviour&quot;}}">
+class Component extends DCLogic {
+  state = {
+    q: "", tagMode: "all", filterTags: [], builtIn: true, user: true,
+    sort: "name", sortDir: "asc",
+    selected: null, editing: null, editScope: "row", draft: null, tagInput: "",
+    openKey: "u:reso", dirty: true,
+    folder: "/home/joaquin/.config/Autotel/MEP_SYNTH/Presets",
+    oldFolder: "", dest: "", dialog: null, dragKey: null, dropTag: null,
+    status: "10 presets · library idle",
+    presets: [
+      { key: "f:vinyl", name: "Vinyl Bed — resonant", author: "Factory", date: "2026-09-22", builtIn: true, star: true, tags: ["pad", "texture"], comment: "wide, slow filter drift", description: "" },
+      { key: "f:dust", name: "Dust Pad", author: "Factory", date: "2026-09-22", builtIn: true, star: false, tags: ["pad"], comment: "", description: "" },
+      { key: "f:glass", name: "Glass Bell", author: "Factory", date: "2026-09-22", builtIn: true, star: false, tags: ["bell", "bright"], comment: "", description: "" },
+      { key: "f:choir", name: "Tape Choir", author: "Factory", date: "2026-09-22", builtIn: true, star: false, tags: ["pad", "texture"], comment: "", description: "" },
+      { key: "f:pluck", name: "Sub Pluck", author: "Factory", date: "2026-09-22", builtIn: true, star: false, tags: ["bass"], comment: "", description: "" },
+      { key: "u:glocken", name: "glocken", author: "joaquin", date: "2026-09-21", builtIn: false, star: true, tags: ["bell"], comment: "the newer one — keep", description: "" },
+      { key: "u:reso", name: "Reso synth", author: "joaquin", date: "2026-09-21", builtIn: false, star: false, tags: ["lead"], comment: "", description: "" },
+      { key: "u:init", name: "init", author: "joaquin", date: "2026-09-21", builtIn: false, star: false, tags: ["init"], comment: "starting point for new patches", description: "" },
+      { key: "u:default", name: "default patch", author: "joaquin", date: "2026-09-21", builtIn: false, star: false, tags: ["init"], comment: "", description: "" },
+      { key: "u:circles", name: "Circles", author: "joaquin", date: "2026-09-21", builtIn: false, star: false, tags: ["texture"], comment: "delete this", description: "" }
+    ]
+  };
+
+  find(key) { return this.state.presets.find(p => p.key === key); }
+  set(patch) { this.setState(patch); }
+
+  matches(p) {
+    const s = this.state, q = s.q.trim().toLowerCase();
+    if (p.builtIn && !s.builtIn) return false;
+    if (!p.builtIn && !s.user) return false;
+    if (q && ![p.name, p.author, p.comment, p.description].join(" ").toLowerCase().includes(q)) return false;
+    if (s.filterTags.length) {
+      const has = t => p.tags.includes(t);
+      if (s.tagMode === "all" ? !s.filterTags.every(has) : !s.filterTags.some(has)) return false;
+    }
+    return true;
+  }
+
+  toggleFilterTag(t) {
+    const f = this.state.filterTags;
+    this.set({ filterTags: f.includes(t) ? f.filter(x => x !== t) : f.concat(t) });
+  }
+
+  allTags() {
+    const seen = [];
+    this.state.presets.forEach(p => p.tags.forEach(t => { if (!seen.includes(t)) seen.push(t); }));
+    return seen.sort();
+  }
+
+  requestLoad(key) {
+    const guard = this.props.loadGuard ?? "dirty";
+    const p = this.find(key);
+    if (!p) return;
+    if (key === this.state.openKey && !this.state.dirty) return this.doLoad(key);
+    if (guard === "none" || (guard === "dirty" && !this.state.dirty)) return this.doLoad(key);
+    this.set({ dialog: { kind: "guard", key }, selected: key });
+  }
+
+  doLoad(key) {
+    const p = this.find(key);
+    this.set({ openKey: key, dirty: false, dialog: null, selected: key, editing: null, status: "loaded “" + p.name + "”" });
+  }
+
+  openEdit(key, scope) {
+    const p = this.find(key);
+    if (!p) return;
+    this.set({ editing: key, editScope: scope || "row", selected: scope === "live" ? this.state.selected : key, tagInput: "", draft: { name: p.name, author: p.author, comment: p.comment, description: p.description, tags: p.tags.slice() } });
+  }
+
+  addDraftTag(t) {
+    const v = String(t || "").trim().toLowerCase();
+    if (!v) return;
+    const d = this.state.draft;
+    if (d.tags.includes(v)) return this.set({ tagInput: "" });
+    this.set({ draft: Object.assign({}, d, { tags: d.tags.concat(v) }), tagInput: "" });
+  }
+
+  renderVals() {
+    const s = this.state;
+    const railOn = this.props.showTagRail ?? true;
+    const showComments = this.props.showComments ?? true;
+    const confirmDel = this.props.confirmDelete ?? true;
+    const sortKey = p => {
+      if (s.sort === "date") return p.date + "\u0000" + p.name.toLowerCase();
+      if (s.sort === "author") return p.author.toLowerCase() + "\u0000" + p.name.toLowerCase();
+      if (s.sort === "tag") return (p.tags.slice().sort()[0] || "\uffff") + "\u0000" + p.name.toLowerCase();
+      if (s.sort === "favourite") return (p.star ? "0" : "1") + "\u0000" + p.name.toLowerCase();
+      if (s.sort === "source") return (p.builtIn ? "0" : "1") + "\u0000" + p.name.toLowerCase();
+      return p.name.toLowerCase();
+    };
+    const visible = s.presets.filter(p => this.matches(p)).sort((a, b) => {
+      const ka = sortKey(a), kb = sortKey(b);
+      const r = ka < kb ? -1 : ka > kb ? 1 : 0;
+      return s.sortDir === "asc" ? r : -r;
+    });
+    const dlg = s.dialog || {};
+    const pill = on => "padding:6px 10px;border:none;background:" + (on ? "#33333a" : "transparent") + ";color:" + (on ? "#e4e4e8" : "#76767e") + ";font-size:12px;cursor:pointer";
+    const ghost = "padding:5px 10px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer";
+    const dis = "padding:5px 10px;border:1px solid #2e2e33;border-radius:3px;background:#202024;color:#5c5c63;font-size:12px;cursor:not-allowed";
+
+    const guardTarget = dlg.kind === "guard" ? this.find(dlg.key) : null;
+    const openPreset = this.find(s.openKey);
+    const delTarget = dlg.kind === "delete" ? this.find(dlg.key) : null;
+    const destOk = s.dest.trim().length > 3 && s.dest.trim() !== s.folder;
+
+    return {
+      folder: s.folder, oldFolder: s.oldFolder, q: s.q, dest: s.dest, status: s.status,
+      railOn, empty: visible.length === 0,
+      tagInput: s.tagInput,
+      tagModeLabel: s.tagMode === "all" ? "match all" : "match any",
+      hasFilterTags: s.filterTags.length > 0,
+      filterChips: s.filterTags.map(t => ({ label: t, onRemove: () => this.toggleFilterTag(t) })),
+      toggleTagMode: () => this.set({ tagMode: s.tagMode === "all" ? "any" : "all" }),
+      clearTags: () => this.set({ filterTags: [] }),
+      onQuery: e => this.set({ q: e.target.value }),
+      toggleBuiltIn: () => this.set({ builtIn: !s.builtIn }),
+      toggleUser: () => this.set({ user: !s.user }),
+      builtInStyle: pill(s.builtIn), userStyle: pill(s.user),
+      sort: s.sort,
+      onSort: e => this.set({ sort: e.target.value, sortDir: e.target.value === "date" || e.target.value === "favourite" ? "desc" : "asc" }),
+      sortDirLabel: s.sortDir === "asc" ? "↑ A–Z" : "↓ Z–A",
+      sortDirTitle: s.sortDir === "asc" ? "ascending — click for descending" : "descending — click for ascending",
+      toggleSortDir: () => this.set({ sortDir: s.sortDir === "asc" ? "desc" : "asc" }),
+      rescan: () => this.set({ status: "rescanned · " + s.presets.length + " presets in folder" }),
+
+      rail: this.allTags().map(t => {
+        const active = s.filterTags.includes(t);
+        const hot = s.dropTag === t;
+        return {
+          label: t,
+          count: s.presets.filter(p => p.tags.includes(t)).length,
+          style: "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 12px;cursor:pointer;font-size:12.5px;border-left:2px solid " +
+            (active ? "#4aa3ff" : hot ? "#7cbcff" : "transparent") + ";background:" + (hot ? "#2b3444" : active ? "#23272e" : "transparent") +
+            ";color:" + (active ? "#cfe4ff" : "#c8c8d0"),
+          onClick: () => this.toggleFilterTag(t),
+          onDragOver: e => { e.preventDefault(); if (s.dropTag !== t) this.set({ dropTag: t }); },
+          onDragLeave: () => { if (s.dropTag === t) this.set({ dropTag: null }); },
+          onDrop: e => {
+            e.preventDefault();
+            const p = this.find(s.dragKey);
+            if (!p) return this.set({ dropTag: null });
+            const had = p.tags.includes(t);
+            this.set({
+              dropTag: null, dragKey: null,
+              presets: s.presets.map(x => x.key === p.key ? Object.assign({}, x, { tags: had ? x.tags : x.tags.concat(t) }) : x),
+              status: had ? "“" + p.name + "” already tagged " + t : "tagged “" + p.name + "” as " + t
+            });
+          }
+        };
+      }),
+
+      rows: visible.map(p => ({
+        key: p.key, name: p.name, builtIn: p.builtIn, comment: p.comment,
+        isOpen: p.key === s.openKey,
+        selected: p.key === s.selected, editing: p.key === s.editing && s.editScope === "row",
+        showComment: showComments && !!p.comment,
+        star: p.star ? "★" : "☆",
+        starStyle: "flex:none;padding:0;border:none;background:transparent;font-size:13px;line-height:1;cursor:pointer;color:" + (p.star ? "#e0c98a" : "#4e4e55"),
+        meta: p.author + "  ·  " + p.date,
+        hint: p.builtIn ? "factory preset — edit writes a copy into your folder" : "double-click a row to load it",
+        editBtnStyle: ghost,
+        deleteBtnStyle: p.builtIn ? dis : "padding:5px 10px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e8b4b4;font-size:12px;cursor:pointer",
+        style: "padding:7px 12px;cursor:default;background:" + (p.key === s.selected ? "#272730" : "transparent") +
+          ";border-left:2px solid " + (p.key === s.openKey ? "#4aa3ff" : "transparent") +
+          (s.dragKey === p.key ? ";opacity:.45" : ""),
+        tags: p.tags.map(t => ({
+          label: t,
+          style: "flex:none;padding:1px 6px;border:1px solid " + (s.filterTags.includes(t) ? "#4aa3ff" : "#3a3a40") + ";border-radius:10px;background:transparent;color:" + (s.filterTags.includes(t) ? "#cfe4ff" : "#9b9ba3") + ";font-size:10.5px;cursor:pointer",
+          onClick: e => { e.stopPropagation(); this.toggleFilterTag(t); }
+        })),
+        onSelect: () => this.set({ selected: p.key, editing: s.editing === p.key ? p.key : null }),
+        onLoad: e => { if (e && e.stopPropagation) e.stopPropagation(); this.requestLoad(p.key); },
+        onEdit: e => { e.stopPropagation(); this.openEdit(p.key); },
+        onStar: e => { e.stopPropagation(); this.set({ presets: s.presets.map(x => x.key === p.key ? Object.assign({}, x, { star: !x.star }) : x) }); },
+        onDuplicate: e => {
+          e.stopPropagation();
+          const copy = Object.assign({}, p, { key: p.key + ":copy" + s.presets.length, name: p.name + " 2", builtIn: false, author: "joaquin", star: false });
+          this.set({ presets: s.presets.concat(copy), selected: copy.key, status: "duplicated as “" + copy.name + "”" });
+        },
+        onDelete: e => {
+          e.stopPropagation();
+          if (p.builtIn) return this.set({ status: "factory presets cannot be deleted" });
+          if (!confirmDel) return this.set({ presets: s.presets.filter(x => x.key !== p.key), selected: null, status: "deleted “" + p.name + "”" });
+          this.set({ dialog: { kind: "delete", key: p.key } });
+        },
+        onDragStart: e => { if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy"; this.set({ dragKey: p.key }); },
+        onDragEnd: () => this.set({ dragKey: null, dropTag: null })
+      })),
+
+      draft: s.draft || { name: "", author: "", comment: "", description: "", tags: [] },
+      draftTags: (s.draft ? s.draft.tags : []).map(t => ({
+        label: t,
+        onRemove: () => this.set({ draft: Object.assign({}, s.draft, { tags: s.draft.tags.filter(x => x !== t) }) })
+      })),
+      suggestions: this.allTags()
+        .filter(t => s.draft && !s.draft.tags.includes(t) && t.includes(s.tagInput.trim().toLowerCase()))
+        .slice(0, 8)
+        .map(t => ({ label: t, onAdd: () => this.addDraftTag(t) })),
+      hasSuggestions: !!s.draft && this.allTags().some(t => !s.draft.tags.includes(t)),
+      onDraftName: e => this.set({ draft: Object.assign({}, s.draft, { name: e.target.value }) }),
+      onDraftAuthor: e => this.set({ draft: Object.assign({}, s.draft, { author: e.target.value }) }),
+      onDraftComment: e => this.set({ draft: Object.assign({}, s.draft, { comment: e.target.value }) }),
+      onDraftDescription: e => this.set({ draft: Object.assign({}, s.draft, { description: e.target.value }) }),
+      onTagInput: e => this.set({ tagInput: e.target.value }),
+      onTagKey: e => { if (e.key === "Enter") { e.preventDefault(); this.addDraftTag(s.tagInput); } },
+      applyHint: s.editing && this.find(s.editing) && this.find(s.editing).builtIn
+        ? "writes an editable copy into your folder"
+        : "a name change renames the file on disk",
+      cancelEdit: () => this.set({ editing: null, editScope: "row", draft: null, tagInput: "" }),
+      applyEdit: () => {
+        const p = this.find(s.editing), d = s.draft;
+        if (!p || !d) return;
+        const name = d.name.trim() || p.name;
+        const renamed = name !== p.name;
+        if (p.builtIn) {
+          const copy = { key: p.key + ":copy" + s.presets.length, name, author: d.author, comment: d.comment, description: d.description, tags: d.tags.slice(), date: "2026-09-22", builtIn: false, star: false };
+          return this.set({ presets: s.presets.concat(copy), editing: null, draft: null, selected: copy.key, status: "saved a copy of the factory preset as “" + name + "”" });
+        }
+        this.set({
+          presets: s.presets.map(x => x.key === p.key ? Object.assign({}, x, { name, author: d.author, comment: d.comment, description: d.description, tags: d.tags.slice() }) : x),
+          editing: null, draft: null,
+          status: renamed ? "renamed to “" + name + "” and wrote metadata" : "wrote metadata for “" + name + "”"
+        });
+      },
+
+      liveEditing: !!openPreset && s.editing === s.openKey && s.editScope === "live",
+      openEditLive: () => openPreset
+        ? this.openEdit(s.openKey, "live")
+        : this.set({ status: "nothing open — save the patch first, then its name and tags can be edited" }),
+      liveEditStyle: openPreset ? ghost : dis,
+      liveName: openPreset ? openPreset.name : "new patch — never saved",
+      liveIsFile: !!openPreset,
+      liveMeta: openPreset ? openPreset.author + "  ·  " + openPreset.date : "",
+      revertStyle: openPreset && s.dirty
+        ? "padding:5px 10px;border:1px solid #3a3a40;border-radius:3px;background:#26262a;color:#e4e4e8;font-size:12px;cursor:pointer"
+        : dis,
+      doRevert: () => openPreset && s.dirty
+        ? this.set({ dirty: false, status: "reverted “" + openPreset.name + "” to disk" })
+        : this.set({ status: "nothing to revert" }),
+      dirtyLabel: s.dirty ? "● unsaved changes" : "○ saved",
+      dirtyStyle: "padding:4px 9px;border:1px solid " + (s.dirty ? "#6a5a2e" : "#3a3a40") + ";border-radius:11px;background:" + (s.dirty ? "#2e2716" : "#212124") + ";color:" + (s.dirty ? "#e8d49a" : "#9b9ba3") + ";font-size:11px;cursor:pointer",
+      toggleDirty: () => this.set({ dirty: !s.dirty, status: s.dirty ? "patch saved" : "live patch edited" }),
+      doNew: () => this.set({ openKey: null, dirty: false, selected: null, editing: null, status: "new patch" }),
+      doSave: () => s.openKey ? this.set({ dirty: false, status: "saved “" + (openPreset ? openPreset.name : "") + "”" }) : this.set({ status: "nothing open — use save as" }),
+      doSaveAs: () => this.set({ status: "save as: writes into " + s.folder }),
+      saveStyle: s.openKey && s.dirty ? "padding:5px 10px;border:1px solid transparent;border-radius:3px;background:#4aa3ff;color:#101013;font-size:12px;font-weight:500;cursor:pointer" : dis,
+
+      guardOpen: dlg.kind === "guard",
+      guardTitle: guardTarget ? "Load “" + guardTarget.name + "”?" : "",
+      guardBody: openPreset
+        ? "“" + openPreset.name + "” has unsaved changes. Loading replaces the live patch and those edits are gone."
+        : "The live patch has unsaved changes and has never been saved. Loading replaces it.",
+      guardSaveThenLoad: () => { const k = dlg.key; this.set({ dirty: false }); this.doLoad(k); },
+      guardLoadAnyway: () => this.doLoad(dlg.key),
+
+      deleteOpen: dlg.kind === "delete",
+      deleteTitle: delTarget ? "Delete “" + delTarget.name + "”?" : "",
+      confirmDelete: () => this.set({ presets: s.presets.filter(x => x.key !== dlg.key), dialog: null, selected: null, editing: null, status: "deleted — moved to trash" }),
+
+      closeDialog: () => this.set({ dialog: null }),
+      chooseFolder: () => this.set({ folder: "/home/joaquin/Music/Autotel/MEP_SYNTH", status: "preset folder changed — nothing was moved" }),
+      openMigrate: () => this.set({ dialog: { kind: "migrate" }, dest: "" }),
+      onDest: e => this.set({ dest: e.target.value }),
+      chooseDest: () => this.set({ dest: "/home/joaquin/Music/Autotel/MEP_SYNTH/Presets" }),
+      migrateSummary: destOk
+        ? s.presets.filter(p => !p.builtIn).length + " user presets will be moved. Factory presets stay in the plugin. The library then points at the new folder."
+        : "Pick a destination. Every preset file in the current folder is moved there, then the library points at the new folder.",
+      migrateBtnStyle: destOk ? "padding:6px 13px;border:1px solid transparent;border-radius:3px;background:#4aa3ff;color:#101013;font-size:12px;font-weight:500;cursor:pointer" : "padding:6px 13px;border:1px solid #2e2e33;border-radius:3px;background:#202024;color:#5c5c63;font-size:12px;cursor:not-allowed",
+      runMigrate: () => {
+        if (!destOk) return;
+        const moved = s.presets.filter(p => !p.builtIn).length;
+        this.set({ oldFolder: s.folder, folder: s.dest.trim(), dialog: { kind: "migrateDone", moved }, status: "moved " + moved + " presets" });
+      },
+      migrateOpen: dlg.kind === "migrate",
+      migrateDoneOpen: dlg.kind === "migrateDone",
+      migrateDoneTitle: "Moved " + (dlg.moved || 0) + " presets",
+      keepOldFolder: () => this.set({ dialog: null, status: "migrated · old folder kept" }),
+      deleteOldFolder: () => this.set({ dialog: null, status: "migrated · old folder deleted" })
+    };
+  }
+}
+
+</script>
+</body>
+</html>
