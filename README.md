@@ -133,6 +133,11 @@ Every tag is a first-class object, not a text field, and there are four places i
   pasted adds three) — typing a spelling that differs
   only in case joins the existing tag rather than starting a second one.
 
+Tags ignore case everywhere, not just in the picker: files tagged `Bass` and `bass` (say, tagged by
+hand or by an older version) are one tag on the rail, counted together and spelt the way the scan
+first met it; filtering on either matches both, and dropping `bass` on a row tagged `Bass` is
+"already tagged".
+
 Active tag filters combine as `match all` (AND, the default) or `match any` (OR), shown as
 removable chips in their own row once any tag is filtering, with a `clear` to drop them all. They
 combine with the text filter and the built-in/mine source toggles the same way `PresetFilter` does.

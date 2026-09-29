@@ -112,7 +112,7 @@ struct PresetLibrarySortAndFilterTests : juce::UnitTest
             expectEquals (displayName (*library.getFiltered (textAndAnyTag)[0]), juce::String ("Kick"));
         }
 
-        beginTest ("getTagCounts counts rows and orders tags case-insensitively");
+        beginTest ("tags ignore case: counted as one, ordered case-insensitively, filtered either way");
         {
             auto dir = tempDir.getChildFile ("tag-counts");
             dir.createDirectory();
@@ -127,11 +127,22 @@ struct PresetLibrarySortAndFilterTests : juce::UnitTest
             const auto counts = library.getTagCounts();
             juce::StringArray order;
             for (const auto& c : counts) order.add (c.tag);
-            expectEquals (order.joinIntoString (","), juce::String ("ambient,Bells,Drums,drums"));
+            // "Drums" and "drums" are one tag; which spelling wins depends on scan order.
+            expectEquals (order.size(), 3);
+            expectEquals (order.joinIntoString (",").toLowerCase(), juce::String ("ambient,bells,drums"));
+            expectEquals (library.getAllTags().size(), 3);
 
             for (const auto& c : counts)
-                if (c.tag == "ambient")
-                    expectEquals (c.count, 1);
+            {
+                if (c.tag == "ambient")               expectEquals (c.count, 1);
+                if (c.tag.equalsIgnoreCase ("drums")) expectEquals (c.count, 2);
+            }
+
+            PresetFilter byTag;
+            byTag.requiredTags = { "DRUMS" };
+            expectEquals ((int) library.getFiltered (byTag).size(), 2);
+            byTag.matchAnyTag = true;
+            expectEquals ((int) library.getFiltered (byTag).size(), 2);
         }
 
         beginTest ("each sort key orders both directions, with a stable natural-order name tiebreak");

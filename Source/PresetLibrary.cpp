@@ -71,7 +71,7 @@ juce::StringArray PresetLibrary::getAllTags() const
     juce::StringArray tags;
     for (const auto& e : entries_)
         for (const auto& t : e.meta.tags)
-            if (! tags.contains (t)) tags.add (t);
+            if (! tags.contains (t, true)) tags.add (t);
     tags.sort (true);
     return tags;
 }
@@ -84,7 +84,7 @@ std::vector<TagCount> PresetLibrary::getTagCounts() const
         for (const auto& t : e.meta.tags)
         {
             auto existing = std::find_if (counts.begin(), counts.end(),
-                                          [&] (const TagCount& c) { return c.tag == t; });
+                                          [&] (const TagCount& c) { return c.tag.equalsIgnoreCase (t); });
             if (existing == counts.end())
                 counts.push_back ({ t, 1 });
             else
@@ -188,13 +188,13 @@ std::vector<const PresetEntry*> PresetLibrary::getFiltered (const PresetFilter& 
             {
                 passes = false;
                 for (const auto& t : filter.requiredTags)
-                    if (e.meta.tags.contains (t)) { passes = true; break; }
+                    if (e.meta.tags.contains (t, true)) { passes = true; break; }
             }
             else
             {
                 passes = true;
                 for (const auto& t : filter.requiredTags)
-                    if (! e.meta.tags.contains (t)) { passes = false; break; }
+                    if (! e.meta.tags.contains (t, true)) { passes = false; break; }
             }
             if (! passes) continue;
         }

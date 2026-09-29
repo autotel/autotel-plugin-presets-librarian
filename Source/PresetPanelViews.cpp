@@ -59,7 +59,7 @@ struct TagRail::Content : public juce::Component,
         for (int i = 0; i < (int) tags.size(); ++i)
         {
             const auto& t = tags[(size_t) i];
-            const bool isActive = active.contains (t.tag);
+            const bool isActive = active.contains (t.tag, true);
             const bool hot = t.tag == dropTag;
             auto r = juce::Rectangle<int> (0, headerH + i * itemH, getWidth(), itemH);
 

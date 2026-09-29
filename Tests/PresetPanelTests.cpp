@@ -356,6 +356,9 @@ struct PresetPanelTests : juce::UnitTest
 
             rail->onPresetDropped ("drums", key);
             expect (panel.getStatus().contains ("already tagged"));
+
+            rail->onPresetDropped ("DRUMS", key);
+            expect (panel.getStatus().contains ("already tagged"));
         }
 
         beginTest ("clicking a tag filters by it; match all and match any combine them");

@@ -453,7 +453,7 @@ void PresetPanel::refreshTagViews()
     {
         bool exists = false;
         for (const auto& c : counts)
-            if (c.tag == activeTags[i]) { exists = true; break; }
+            if (c.tag.equalsIgnoreCase (activeTags[i])) { exists = true; break; }
         if (! exists) activeTags.remove (i);
     }
 
@@ -578,7 +578,7 @@ bool PresetPanel::isRowOpen (const PresetEntry& e)
 }
 
 bool PresetPanel::isRowFavourite (const PresetEntry& e) { return favourites.contains (favouriteKey (e)); }
-bool PresetPanel::isTagFiltering (const juce::String& t) { return activeTags.contains (t); }
+bool PresetPanel::isTagFiltering (const juce::String& t) { return activeTags.contains (t, true); }
 
 bool PresetPanel::canAudition (const PresetEntry& e)
 {
@@ -719,7 +719,7 @@ void PresetPanel::rowFavouriteToggled (int row)
 
 void PresetPanel::rowTagClicked (const juce::String& tag)
 {
-    if (activeTags.contains (tag)) activeTags.removeString (tag);
+    if (activeTags.contains (tag, true)) activeTags.removeString (tag, true);
     else                           activeTags.add (tag);
     refreshTagViews();
     applyFilterAndRefreshList();
@@ -761,7 +761,7 @@ void PresetPanel::assignTag (const juce::String& tag, const juce::String& key)
         setStatus (quoted (name) + " is a factory preset " + emDash + " duplicate it to tag it");
         return;
     }
-    if (entry.meta.tags.contains (tag))
+    if (entry.meta.tags.contains (tag, true))
     {
         setStatus (quoted (name) + " already tagged " + tag);
         return;

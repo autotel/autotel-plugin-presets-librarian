@@ -49,7 +49,8 @@ juce::String displayName (const PresetEntry&);
 struct PresetFilter
 {
     juce::String      text;
-    juce::StringArray requiredTags;   // an entry must carry ALL of these -- or ANY, see below
+    juce::StringArray requiredTags;   // an entry must carry ALL of these -- or ANY, see below;
+                                      // tags compare ignoring case, everywhere
 
     /** `requiredTags` as OR rather than AND: an entry carrying any one of them passes. Irrelevant
         while `requiredTags` is empty. */
@@ -115,10 +116,12 @@ public:
         generation points into freed storage. */
     int generation() const { return generation_; }
     std::vector<const PresetEntry*> getFiltered (const PresetFilter&) const;
+
+    /** Tags ignore case: "Bass" and "bass" are one tag, spelt the way the scan first met it. */
     juce::StringArray getAllTags() const;
 
     /** Every tag in the library (built-ins included, filters ignored) with the number of rows
-        carrying it, ordered by tag, case-insensitively. */
+        carrying it, ordered by tag, case-insensitively. Case-only spellings count as one tag. */
     std::vector<TagCount> getTagCounts() const;
 
     /** Moves the file to the trash (falling back to a hard delete). The caller is expected to have

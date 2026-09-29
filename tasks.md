@@ -18,17 +18,6 @@ fully specified. Delete an entry as it lands. Durable knowledge goes in `README.
   which should show the prefilled name so it can be corrected before saving. Test in
   `PresetPanelTests.cpp`: save A with author "x", start `new`, save B with no author -> B's file
   carries "x"; a patch whose document already names an author keeps it.
-- [sonnet] **Tags ignore case everywhere, not just in the picker.** Filed as: "Casing should be
-  ignored when typing tags." `TagPicker::addTag` already folds a typed tag onto an existing
-  spelling, but `PresetLibrary` treats tags case-sensitively: `allTags()` / `tagCounts()`
-  (PresetLibrary.cpp ~71-96) list "Bass" and "bass" as two tags, and the tag filter (~191-197)
-  and `PresetPanel::assignTag` (~751) use case-sensitive `contains`. Make all of them
-  case-insensitive: one tag per case-folded spelling, counted together, displayed with the
-  spelling that appears first in scan order (or the most common -- pick one and say which in the
-  README's Tags section); filtering on "bass" matches a row tagged "Bass"; dropping "bass" on a
-  row tagged "Bass" is "already tagged". Also check `TagPicker::rebuild()`'s
-  `tags.contains (t, true)` stays consistent. Tests in `PresetLibraryTests.cpp` for counts and
-  filtering across mixed case.
 ## Consumer follow-ups
 
 Checked 2026-09-29 against each consumer's `Source/`. mepSynth, Lanes and messy system are done.
