@@ -241,3 +241,8 @@ Extracted from the Sampler plugin (`~/dev/Sampler`), which had it as `Source/Pat
 there is a worked example of the adapter. The Lanes plugin (`~/dev/lanes-audio-plugin`) is the
 second, and is what built-ins, `PresetMetadata::extra`, the panel extras and the auditioner hook
 were added for.
+
+A new consumer should start from whichever adapter is closer: Sampler's implements only the base
+`PresetHost` virtuals (the defaults exist so a plain consumer never needs the richer API); Lanes'
+uses all of it -- built-ins, `extra` metadata, panel extras, the auditioner. Favourites and the
+"open preset" path are the plugin's to persist; the panel keeps neither beyond the editor.
