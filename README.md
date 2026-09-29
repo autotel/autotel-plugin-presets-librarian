@@ -46,6 +46,12 @@ Three rules the rest of the design follows from:
    would be replaced, except reverting a clean open preset), or `none`. `new` throws the live patch
    away exactly as surely as a load does, so it passes the same guard.
 
+A patch getting its first file — a new one, one loaded from a built-in, or a `save as` — is signed
+with the author of the most recently saved preset in the folder when neither the patch nor its
+document names one; the edit popover shows that name before the save, so it can be changed. There
+is no setting to keep: the folder already remembers who saved last. Saving over an existing file
+never re-signs it.
+
 ## Using it from a plugin
 
 ```cmake

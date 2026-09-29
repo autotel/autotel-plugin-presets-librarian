@@ -290,6 +290,64 @@ struct PresetPanelTests : juce::UnitTest
             expectEquals (strip->getState().name, juce::String ("fresh"));
         }
 
+        beginTest ("a new patch is signed like the last preset saved, and never re-signs a file");
+        {
+            auto dir = freshDir ("atl-presetpanel-author");
+            RecordingHost h;
+            h.folder = dir;
+            PresetPanel p (h, format);
+            p.setSize (1000, 700);
+            auto* s = find<LiveStrip> (p);
+            auto newButton = [&p] { return find<juce::TextButton> (p, [] (juce::TextButton& b) { return b.getButtonText() == "new"; }); };
+
+            auto older = makeMeta();
+            older.author = "old hand";
+            older.date = "2020-01-01T00:00:00.000Z";
+            PresetFile::save (dir.getChildFile ("older" + format.extension), makeDocument(), older, format);
+            auto untouched = makeMeta();
+            untouched.author = {};
+            PresetFile::save (dir.getChildFile ("unsigned" + format.extension), makeDocument(), untouched, format);
+            p.rescan();
+            newButton()->onClick();
+
+            // Named from the popover, which already shows who it will be signed by.
+            s->editButton.onClick();
+            auto* popover = find<PresetEditPopover> (p);
+            if (popover == nullptr) { expect (false); return; }
+            expectEquals (popover->authorEditor.getText(), juce::String ("old hand"));
+            popover->authorEditor.setText ("x", false);
+            popover->nameEditor.setText ("first", false);
+            popover->applyButton.onClick();
+            s->saveButton.onClick();
+
+            newButton()->onClick();
+            s->saveButton.onClick();   // no name, no author: both come from elsewhere
+            expectEquals (h.lastMeta.author, juce::String ("x"));
+
+            // A document that names its own author keeps it.
+            newButton()->onClick();
+            h.document.setProperty ("author", "doc author", nullptr);
+            s->saveButton.onClick();
+            expectEquals (h.lastMeta.author, juce::String ("doc author"));
+
+            // Saving an existing file with no author leaves it unsigned.
+            h.document = juce::ValueTree { "Doc" };
+            const auto unsignedFile = dir.getChildFile ("unsigned" + format.extension);
+            auto* l = find<PresetListView> (p);
+            auto* search = find<juce::TextEditor> (p, [] (juce::TextEditor& e) { return e.getName() == "preset filter"; });
+            search->setText ("unsigned", false);
+            search->onTextChange();
+            l->selectRow (0);
+            l->loadButton.onClick();
+            expect (h.lastFile == unsignedFile);
+            h.dirty = true;
+            s->saveButton.onClick();
+            expect (h.lastFile == unsignedFile);
+            if (auto meta = PresetFile::scanMetadataOnly (unsignedFile, format))
+                expect (meta->author.isEmpty(), "an existing file is never re-signed");
+            dir.deleteRecursively();
+        }
+
         beginTest ("edit on a row opens the popover under it, and apply renames the file");
         {
             panel.rescan();

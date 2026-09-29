@@ -280,7 +280,8 @@ private:
     void assignTag (const juce::String& tag, const juce::String& key);
 
     /** What the live patch is called and described as, for a strip, a save or a popover.
-        `askDocument` fills a missing name or author from the live document itself. */
+        `askDocument` fills a missing name or author from the live document itself, and a live
+        patch with no file yet that still has no author takes the last saved preset's. */
     PresetMetadata liveMetadata (bool askDocument = false) const;
     juce::String liveName() const;
 

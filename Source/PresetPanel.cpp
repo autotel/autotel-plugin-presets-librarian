@@ -35,6 +35,22 @@ PresetSortKey sortKeyFor (int id)
         default:          return PresetSortKey::name;
     }
 }
+/** The author of the most recently saved preset in the user's folder, or empty. What a patch with
+    no author of its own is signed with when it gets a file -- no setting to keep, since the folder
+    already remembers who saved last. */
+juce::String lastSavedAuthor (const PresetLibrary& library)
+{
+    juce::String author, newest;
+    for (const auto& e : library.getAll())
+    {
+        if (e.isBuiltIn || e.meta.author.isEmpty()) continue;
+        const auto date = e.meta.date.isNotEmpty() ? e.meta.date
+                                                   : e.file.getLastModificationTime().toISO8601 (true);
+        if (author.isEmpty() || date > newest) { author = e.meta.author; newest = date; }
+    }
+    return author;
+}
+
 } // namespace
 
 // ── construction ────────────────────────────────────────────────────────────
@@ -806,6 +822,10 @@ PresetMetadata PresetPanel::liveMetadata (bool askDocument) const
         if (m.name.isEmpty())   m.name = doc.getProperty (format.nameProperty, "").toString();
         if (m.author.isEmpty()) m.author = doc.getProperty (format.authorProperty, "").toString();
     }
+    // A patch about to get its first file is signed like the last one saved. An existing file is
+    // never re-signed: an empty author there is that file's business.
+    if (askDocument && ! liveHasFile() && m.author.isEmpty())
+        m.author = lastSavedAuthor (library);
     return m;
 }
 
@@ -996,6 +1016,8 @@ void PresetPanel::doSaveAs()
     // Save as asks for the name where every other name is asked for: in the popover, under the
     // live strip. The suggestion is the live name, moved on to the next free one.
     auto meta = liveMetadata (true);
+    // Save as always makes a new file, so it is signed like one even when the open file is not.
+    if (meta.author.isEmpty()) meta.author = lastSavedAuthor (library);
     const auto folder = host.presetFolder();
     meta.name = PresetFile::resolveCollision (folder, PresetFile::sanitiseFilename (meta.name), format)
                     .getFileNameWithoutExtension();
