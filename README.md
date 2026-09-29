@@ -129,7 +129,8 @@ Every tag is a first-class object, not a text field, and there are four places i
   — dropping one on a tag reports `"x" is a factory preset — duplicate it to tag it` rather than
   failing quietly. Duplicate it first, then tag the copy.
 - **The tag picker**, in the edit popover: the precise path. Chips with a `×` to remove, and an
-  input that adds an existing tag or creates a new one on Return — typing a spelling that differs
+  input that adds an existing tag or creates a new one on Return or a comma (so `a, b, c` typed or
+  pasted adds three) — typing a spelling that differs
   only in case joins the existing tag rather than starting a second one.
 
 Active tag filters combine as `match all` (AND, the default) or `match any` (OR), shown as

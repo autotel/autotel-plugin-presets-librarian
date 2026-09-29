@@ -30,8 +30,19 @@ TagPicker::TagPicker()
         input.clear();
         rebuild();
     };
-    // Suggestions narrow as you type.
-    input.onTextChange = [this] { rebuild(); };
+    // A comma commits everything before it, so "a, b, c" typed or pasted adds a and b and leaves
+    // "c" in the box. Suggestions narrow as you type.
+    input.onTextChange = [this]
+    {
+        const auto text = input.getText();
+        if (const auto comma = text.lastIndexOfChar (','); comma >= 0)
+        {
+            addTag (text.substring (0, comma));
+            input.setText (text.substring (comma + 1).trimStart(), false);
+            input.moveCaretToEnd();
+        }
+        rebuild();
+    };
     addAndMakeVisible (input);
 }
 
@@ -52,7 +63,15 @@ void TagPicker::setTags (const juce::StringArray& t, const juce::StringArray& vo
 
 void TagPicker::addTag (const juce::String& typed)
 {
-    auto tag = typed.removeCharacters (",").trim();
+    // Tags are stored comma-joined, so a comma can only ever separate two of them.
+    if (typed.containsChar (','))
+    {
+        for (const auto& piece : juce::StringArray::fromTokens (typed, ",", ""))
+            addTag (piece);
+        return;
+    }
+
+    auto tag = typed.trim();
     if (tag.isEmpty()) return;
 
     for (const auto& existing : vocabulary)

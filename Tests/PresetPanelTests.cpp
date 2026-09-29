@@ -325,7 +325,21 @@ struct PresetPanelTests : juce::UnitTest
             picker.addTag ("bell");
             picker.addTag ("PAD");
             picker.addTag ("a, b");
-            expectEquals (picker.getTags().joinIntoString ("|"), juce::String ("pad|Bell|a b"));
+            expectEquals (picker.getTags().joinIntoString ("|"), juce::String ("pad|Bell|a|b"));
+        }
+
+        beginTest ("a comma in the tag input commits what was typed before it");
+        {
+            TagPicker picker;
+            picker.setTags ({}, { "Bell" });
+            picker.input.setText ("bell, dark,, wa", false);
+            picker.input.onTextChange();
+            expectEquals (picker.getTags().joinIntoString ("|"), juce::String ("Bell|dark"));
+            expectEquals (picker.input.getText(), juce::String ("wa"));
+
+            picker.input.onReturnKey();
+            expectEquals (picker.getTags().joinIntoString ("|"), juce::String ("Bell|dark|wa"));
+            expect (picker.input.isEmpty());
         }
 
         beginTest ("dropping a preset on a tag assigns it, once");

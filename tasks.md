@@ -29,14 +29,6 @@ fully specified. Delete an entry as it lands. Durable knowledge goes in `README.
   row tagged "Bass" is "already tagged". Also check `TagPicker::rebuild()`'s
   `tags.contains (t, true)` stays consistent. Tests in `PresetLibraryTests.cpp` for counts and
   filtering across mixed case.
-- [sonnet] **A comma in the tag input commits the tag.** Filed as: "when typing a comma into the
-  tags input, may the typed tags be separated by commas". Today `addTag` strips commas and only
-  Return commits. In `TagPicker`'s `input.onTextChange` (PresetEditPopover.cpp ~34): when the text
-  contains a comma, split on commas, `addTag` every complete piece, and leave the text after the
-  last comma in the input. Pasting "a, b, c" therefore adds a and b and leaves "c" typed; Return
-  commits the rest as before. Update the placeholder hint if it helps ("type, comma or return to
-  add…"). Test in `PresetPanelTests.cpp` via the popover's tag picker.
-
 ## Consumer follow-ups
 
 Checked 2026-09-29 against each consumer's `Source/`. mepSynth, Lanes and messy system are done.

@@ -6,7 +6,7 @@ namespace atl
 {
 
 /** The precise path for tags: the ones a preset carries as removable chips, an input that adds or
-    creates one on Return, and the library's other tags underneath as dashed suggestions, narrowed
+    creates one on Return or a comma, and the library's other tags underneath as dashed suggestions, narrowed
     as you type. */
 class TagPicker : public juce::Component
 {
@@ -20,8 +20,9 @@ public:
     void setTags (const juce::StringArray& tags, const juce::StringArray& vocabulary);
     juce::StringArray getTags() const { return tags; }
 
-    /** Adds `typed` -- trimmed, commas dropped (tags are stored comma-joined), and spelt like an
-        existing tag when one matches ignoring case. Empty or already-present is a no-op. */
+    /** Adds `typed` -- trimmed, split on commas into one tag per piece (tags are stored
+        comma-joined), and spelt like an existing tag when one matches ignoring case. Empty or
+        already-present is a no-op. */
     void addTag (const juce::String& typed);
     void removeTag (const juce::String&);
 
