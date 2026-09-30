@@ -14,7 +14,7 @@ panel, so saving and browsing presets works the same way in every one of them.
   `migrate…` to move the files there) sits over a filter bar (text, source, sort) and, while any
   tags are filtering, a row of active-tag chips. Below that: a tag rail with a count per tag, and
   the list — the pinned live-patch strip on top (its dirty chip, `edit…`, `save`, `revert to disk`),
-  then rows with a star, tag chips and a comment, each one growing an action strip
+  then rows with a star, tag chips, a comment and a one-click `load` chip, each one growing an action strip
   (`load` / `edit…` / `duplicate` / `delete`) when selected. `edit…`, on a row or the strip, opens
   a popover anchored under it. A status bar carries the last thing that happened, plus `new` and
   `save as`. The panel's own drawing lives in `PresetPanelStyle` (colours, fonts, look-and-feel),
@@ -30,8 +30,9 @@ Three rules the rest of the design follows from:
 2. **The librarian does not know what a document means.** It moves `juce::ValueTree`s around. What
    a plugin's tree contains, and what happens when one is loaded, is the plugin's business.
 3. **Browsing is not loading.** Selecting a row highlights it and grows its action strip; it never
-   touches the live document. **Load** is the only thing that does — double-clicking a row and
-   pressing Return are shortcuts for it. Scrolling the list can't lose unsaved work, so a plugin
+   touches the live document. **Load** is the only thing that does — double-clicking a row,
+   pressing Return, and the `load` chip at the right edge of every row (one click, selected or not,
+   for going through presets one after another) are shortcuts for it. Scrolling the list can't lose unsaved work, so a plugin
    whose `applyDocument` is expensive or disruptive — one that rebuilds a graph, rereads sample
    files, interrupts audio — pays for it only when asked. Hearing a row without loading it is what
    `PresetAuditioner` is for.
@@ -233,8 +234,8 @@ still counts as having "other content" after a move.
 
 `Tests/PresetPanelTests.cpp` drives a real `PresetPanel`, and is the one that needs a
 `juce::ScopedJuceInitialiser_GUI` alive in the consuming test binary, since it builds actual
-`juce::Component`s. It checks: that selecting a row never loads it; that Load, Return, and a
-double-click all fire `documentLoaded` and never `documentSaved` (and that a double-click on a row
+`juce::Component`s. It checks: that selecting a row never loads it; that Load, Return, a row's
+`load` chip (once, even when double-clicked) and a double-click all fire `documentLoaded` and never `documentSaved` (and that a double-click on a row
 that isn't the selection loads nothing); the dirty guard's three answers (`cancel` loads nothing,
 `load anyway` loads, `save, then load` writes the open preset back first) and that `loadGuard`
 changes the policy; the live strip's save and revert; naming and saving a patch that has never been

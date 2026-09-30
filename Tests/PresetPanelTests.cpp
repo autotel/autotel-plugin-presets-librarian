@@ -178,6 +178,28 @@ struct PresetPanelTests : juce::UnitTest
             expectEquals (host.loadedCount, 3);
         }
 
+        beginTest ("a row's load chip loads it in one click, selected or not");
+        {
+            auto* content = find<juce::Viewport> (*list)->getViewedComponent();
+            list->selectRow (-1);
+            const auto chip = list->loadAreaForRow (0);
+            expect (! chip.isEmpty(), "every row carries a load chip");
+
+            content->mouseDown (mouseAt (content, chip.getCentre().toFloat(), 1));
+            content->mouseUp (mouseAt (content, chip.getCentre().toFloat(), 1));
+            expectEquals (host.loadedCount, 4);
+            expectEquals (host.savedCount, 0);
+            expectEquals (list->getSelectedRow(), 0);
+
+            // The second click of a double-click on the chip, and the double-click itself, are the
+            // same intent -- not two more loads.
+            const auto again = list->loadAreaForRow (0).getCentre().toFloat();
+            content->mouseDown (mouseAt (content, again, 2));
+            content->mouseDoubleClick (mouseAt (content, again, 2));
+            content->mouseUp (mouseAt (content, again, 2));
+            expectEquals (host.loadedCount, 4);
+        }
+
         beginTest ("loading over unsaved changes asks first, and cancel loads nothing");
         {
             host.dirty = true;
@@ -187,7 +209,7 @@ struct PresetPanelTests : juce::UnitTest
             list->loadButton.onClick();
             auto* modal = findModal (panel);
             expect (modal != nullptr, "a dirty live patch must not be replaced without asking");
-            expectEquals (host.loadedCount, 3);
+            expectEquals (host.loadedCount, 4);
 
             if (modal != nullptr)
             {
@@ -196,7 +218,7 @@ struct PresetPanelTests : juce::UnitTest
                 modal->findButton ("cancel")->onClick();
             }
             expect (findModal (panel) == nullptr);
-            expectEquals (host.loadedCount, 3);
+            expectEquals (host.loadedCount, 4);
         }
 
         beginTest ("load anyway loads");
@@ -204,7 +226,7 @@ struct PresetPanelTests : juce::UnitTest
             list->loadButton.onClick();
             if (auto* modal = findModal (panel))
                 modal->findButton ("load anyway")->onClick();
-            expectEquals (host.loadedCount, 4);
+            expectEquals (host.loadedCount, 5);
             expectEquals (host.savedCount, 0);
         }
 
@@ -215,7 +237,7 @@ struct PresetPanelTests : juce::UnitTest
             if (auto* modal = findModal (panel))
                 modal->findButton ("save, then load")->onClick();
             expectEquals (host.savedCount, 1);
-            expectEquals (host.loadedCount, 5);
+            expectEquals (host.loadedCount, 6);
             expectEquals (host.lastFile.getFileNameWithoutExtension(), juce::String ("kit"));
         }
 
@@ -229,14 +251,14 @@ struct PresetPanelTests : juce::UnitTest
             list->selectRow (0);
             list->loadButton.onClick();
             expect (findModal (panel) == nullptr, "none never asks");
-            expectEquals (host.loadedCount, 6);
+            expectEquals (host.loadedCount, 7);
 
             options.loadGuard = PresetPanelOptions::LoadGuard::always;
             panel.setOptions (options);
             list->selectRow (0);
             list->loadButton.onClick();
             expect (findModal (panel) == nullptr, "reloading the clean open preset replaces nothing");
-            expectEquals (host.loadedCount, 7);
+            expectEquals (host.loadedCount, 8);
 
             options.loadGuard = PresetPanelOptions::LoadGuard::dirty;
             panel.setOptions (options);
@@ -255,7 +277,7 @@ struct PresetPanelTests : juce::UnitTest
             expect (strip->revertButton.isEnabled());
 
             strip->revertButton.onClick();
-            expectEquals (host.loadedCount, 8);
+            expectEquals (host.loadedCount, 9);
             expect (panel.getStatus().startsWith ("reverted"));
         }
 
@@ -451,7 +473,7 @@ struct PresetPanelTests : juce::UnitTest
             content->mouseDown (mouseAt (content, { 19.0f, 17.0f }, 1));
             expectEquals (panel.getFavourites().size(), 1);
             expectEquals (notified, 1);
-            expectEquals (host.loadedCount, 8, "starring loads nothing");
+            expectEquals (host.loadedCount, 9, "starring loads nothing");
             content->mouseDown (mouseAt (content, { 19.0f, 17.0f }, 1));
             expectEquals (panel.getFavourites().size(), 0);
             panel.onFavouritesChanged = nullptr;

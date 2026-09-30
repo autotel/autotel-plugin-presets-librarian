@@ -110,7 +110,8 @@ private:
     the edit popover, which is borrowed from the panel and laid out *in* the list, pushing the rows
     under it down.
 
-    Single click selects, and never loads. Double-click and Return load. */
+    Single click selects, and never loads. Double-click and Return load, and so does the `load` chip
+    every row carries at its right edge -- one click, for going through presets one after another. */
 class PresetListView : public juce::Component
 {
 public:
@@ -172,6 +173,9 @@ public:
     void scrollToRow (int row);
     void scrollToTop();
 
+    /** The row's one-click `load` chip, in the list's scrolled content's coordinates. */
+    juce::Rectangle<int> loadAreaForRow (int row) const;
+
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
     void focusGained (FocusChangeType) override { repaint(); }
@@ -185,7 +189,7 @@ private:
 
     struct RowGeometry
     {
-        juce::Rectangle<int> star, name, comment, meta;
+        juce::Rectangle<int> star, name, comment, meta, load;
         std::vector<std::pair<juce::Rectangle<int>, juce::String>> tags;
         juce::Rectangle<int> factoryBadge, openBadge;
     };
@@ -210,7 +214,7 @@ private:
     int numRows = 0;
     std::vector<int> rowTops, rowHeights;   // rowHeights excludes the popover and the divider
     int selectedRow = -1, popoverRow = -1, hoverRow = -1, draggingRow = -1;
-    bool popoverLive = false;
+    bool popoverLive = false, hoverLoad = false;
     int emptyTop = 0;
     juce::Rectangle<int> hintArea;
     juce::String hint;

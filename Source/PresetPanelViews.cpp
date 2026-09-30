@@ -343,7 +343,8 @@ namespace
 constexpr int rowPadX = 12, rowPadY = 7, lineH = 20, commentH = 18, stripH = 40, indent = 27;
 }
 
-struct PresetListView::Content : public juce::Component
+struct PresetListView::Content : public juce::Component,
+                                 public juce::TooltipClient
 {
     explicit Content (PresetListView& o) : owner (o)
     {
@@ -355,12 +356,25 @@ struct PresetListView::Content : public juce::Component
     void mouseMove (const juce::MouseEvent& e) override
     {
         const int r = owner.rowAt (e.y);
-        if (r != owner.hoverRow) { owner.hoverRow = r; repaint(); }
+        const bool onLoad = owner.loadAreaForRow (r).contains (e.getPosition());
+        if (r != owner.hoverRow || onLoad != owner.hoverLoad)
+        {
+            owner.hoverRow = r;
+            owner.hoverLoad = onLoad;
+            repaint();
+        }
     }
 
     void mouseExit (const juce::MouseEvent&) override
     {
-        if (owner.hoverRow != -1) { owner.hoverRow = -1; repaint(); }
+        if (owner.hoverRow != -1) { owner.hoverRow = -1; owner.hoverLoad = false; repaint(); }
+    }
+
+    juce::String getTooltip() override
+    {
+        const auto pos = getMouseXYRelative();
+        return owner.loadAreaForRow (owner.rowAt (pos.y)).contains (pos)
+                   ? "load this preset into the live patch, in one click" : juce::String();
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -378,6 +392,14 @@ struct PresetListView::Content : public juce::Component
         if (geo.star.expanded (3).contains (e.getPosition()))
         {
             owner.model->rowFavouriteToggled (row);
+            return;
+        }
+        if (geo.load.expanded (2).contains (e.getPosition()))
+        {
+            // The second click of a double-click on it is the same intent, not a second load.
+            if (e.mods.isPopupMenu() || e.getNumberOfClicks() > 1) return;
+            if (row != owner.selectedRow) owner.selectRow (row);
+            owner.model->rowLoadRequested (row);
             return;
         }
         for (const auto& [area, tag] : geo.tags)
@@ -439,6 +461,7 @@ struct PresetListView::Content : public juce::Component
             if (entry == nullptr) return;
             const auto geo = owner.geometryFor (*entry, owner.rowBounds (row));
             if (geo.star.expanded (3).contains (e.getPosition())) return;
+            if (geo.load.expanded (2).contains (e.getPosition())) return;   // its mouseDown loaded
             for (const auto& t : geo.tags)
                 if (t.first.contains (e.getPosition())) return;
             owner.model->rowLoadRequested (row);
@@ -532,6 +555,11 @@ PresetListView::RowGeometry PresetListView::geometryFor (const PresetEntry& e, j
 
     g.star = line.removeFromLeft (14).withSizeKeepingCentre (14, 14);
     line.removeFromLeft (indent - 14 - 13 + 9);   // 9 px gap, as the design's flex gap
+
+    // A fixed column at the far right, so the chip sits in the same place on every row.
+    const int loadW = textWidth (PanelFonts::sans (10.5f), "load") + 16;
+    g.load = line.removeFromRight (loadW).withSizeKeepingCentre (loadW, 18);
+    line.removeFromRight (12);
 
     // Right-aligned meta first: it is fixed text, the name ellipsises into what is left.
     juce::StringArray metaParts;
@@ -661,6 +689,23 @@ void PresetListView::paintRows (juce::Graphics& g, juce::Rectangle<int> clip)
             g.drawRoundedRectangle (area.toFloat().reduced (0.5f), 9.0f, 1.0f);
             g.setColour (filtering ? pal.accentText : c.textDim);
             g.drawText (tag, area, juce::Justification::centred, false);
+        }
+
+        {
+            const bool hot = row == hoverRow && hoverLoad;
+            if (hot)
+            {
+                g.setColour (c.accent);
+                g.fillRoundedRectangle (geo.load.toFloat(), 9.0f);
+            }
+            else
+            {
+                g.setColour (selected ? c.outline.brighter (0.35f) : c.outline);
+                g.drawRoundedRectangle (geo.load.toFloat().reduced (0.5f), 9.0f, 1.0f);
+            }
+            g.setFont (PanelFonts::sans (10.5f));
+            g.setColour (hot ? pal.onAccent : c.textDim);
+            g.drawText ("load", geo.load, juce::Justification::centred, false);
         }
 
         juce::StringArray metaParts;
@@ -868,6 +913,12 @@ void PresetListView::scrollToRow (int row)
 }
 
 void PresetListView::scrollToTop() { viewport.setViewPosition (0, 0); }
+
+juce::Rectangle<int> PresetListView::loadAreaForRow (int row) const
+{
+    const auto* e = model != nullptr && juce::isPositiveAndBelow (row, numRows) ? model->getRow (row) : nullptr;
+    return e != nullptr ? geometryFor (*e, rowBounds (row)).load : juce::Rectangle<int>();
+}
 
 void PresetListView::resized()
 {
