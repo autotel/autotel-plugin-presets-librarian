@@ -63,6 +63,17 @@ struct PresetHost
         the panel ask right away. */
     virtual bool documentHasUnsavedChanges() const { return true; }
 
+    /** The open preset's `PresetEntry::key()` -- a file's full path, or `builtin:<category>/<name>`
+        -- as last handed to `openDocumentKeyChanged()`. Empty: nothing is open.
+
+        A panel adopts it when it is constructed. The panel usually lives in the plugin's editor,
+        which a host destroys whenever the window is closed; a host that keeps the key on its
+        processor (and in its saved state) is what lets a reopened window -- or a reopened project
+        -- still know which file Save writes to. The defaults keep nothing, so every new panel
+        starts with nothing open, as it did before these existed. */
+    virtual juce::String openDocumentKey() const { return {}; }
+    virtual void openDocumentKeyChanged (const juce::String& key) { juce::ignoreUnused (key); }
+
     /** Move every preset file from the current folder to `dest`, then adopt `dest`. Returns what
         moved and what was skipped so the panel can report it.
 
@@ -194,6 +205,10 @@ public:
         knows the moment its document changed. */
     void refreshLiveState();
 
+    /** Takes `PresetHost::openDocumentKey()` as what is open. The constructor does this; call it
+        again when the host opened something without the panel -- a preset stepper of its own. */
+    void adoptOpenDocument();
+
     /** Favourites are a per-preset star, kept by the panel rather than written into the preset:
         starring is a preference about a file, not a property of it, and starring a factory preset
         must not need a copy of it. A plugin that wants them to outlast the editor stores what
@@ -251,6 +266,8 @@ private:
 
     /** The open preset's library entry, or null when nothing is open or it has left the folder. */
     const PresetEntry* openEntry() const;
+    /** The one writer of `currentFile` / `currentKey`; tells the host, which may outlive us. */
+    void setOpen (const juce::File&, const juce::String& key);
     bool liveHasFile() const { return currentFile != juce::File(); }
     bool isDirty() const { return host.documentHasUnsavedChanges(); }
 
@@ -332,7 +349,8 @@ private:
 
     /** The file the live document was last loaded from or saved to. Empty means it has no on-disk
         identity yet, so Save writes a new file. Panel-local: the plugin is not asked to track a
-        "current preset file" for a purely UI need. */
+        "current preset file" for a purely UI need -- but it is told the key, see
+        `PresetHost::openDocumentKey()`. */
     juce::File currentFile;
 
     /** `PresetEntry::key()` of the open preset. Tracked beside `currentFile` because a built-in has

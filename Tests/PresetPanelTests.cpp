@@ -61,7 +61,11 @@ struct RecordingHost : PresetHost
         dirty = false;
     }
 
+    juce::String openDocumentKey() const override { return openKey; }
+    void openDocumentKeyChanged (const juce::String& k) override { openKey = k; }
+
     juce::File folder;
+    juce::String openKey;
     bool dirty = false;
     int savedCount = 0, loadedCount = 0, newCount = 0;
     juce::File lastFile;
@@ -154,6 +158,38 @@ struct PresetPanelTests : juce::UnitTest
             expectEquals (host.lastMeta.name, juce::String ("kit"));
             expectEquals (strip->getState().name, juce::String ("kit"));
             expect (findModal (panel) == nullptr, "a clean live patch loads without asking");
+        }
+
+        beginTest ("a reopened panel knows what is open, and Save writes back to it");
+        {
+            // The plugin's editor -- and the panel in it -- is destroyed whenever the host closes
+            // the window. The key the host kept is what the next panel starts from.
+            expectEquals (host.openKey, tempDir.getChildFile ("kit" + format.extension).getFullPathName());
+            {
+                PresetPanel reopened (host, format);
+                reopened.setSize (1000, 700);
+                auto* s = find<LiveStrip> (reopened);
+                expectEquals (s->getState().name, juce::String ("kit"));
+
+                host.dirty = true;
+                reopened.refreshLiveState();
+                const int saves = host.savedCount;
+                s->saveButton.onClick();
+                expect (findModal (reopened) == nullptr, "save asked for a name it already had");
+                expectEquals (host.savedCount, saves + 1);
+                expectEquals (host.lastFile.getFileNameWithoutExtension(), juce::String ("kit"));
+            }
+
+            // A remembered file that has since gone is nothing open, not a dangling one.
+            const auto kept = host.openKey;
+            host.openKey = tempDir.getChildFile ("gone" + format.extension).getFullPathName();
+            {
+                PresetPanel reopened (host, format);
+                expect (host.openKey.isEmpty());
+            }
+            host.openKey = kept;
+            host.dirty = false;
+            host.savedCount--;   // the tests below count saves from here
         }
 
         beginTest ("Return on the list is a shortcut for Load");

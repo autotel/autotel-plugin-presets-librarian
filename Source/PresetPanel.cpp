@@ -185,6 +185,7 @@ PresetPanel::PresetPanel (PresetHost& h, PresetFormat f)
 
     applyColours();
     rescanAndRefreshList();
+    adoptOpenDocument();   // this panel may be a reopened window's
     refreshFolderLabel();
     setStatus (plural ((int) library.getAll().size(), "preset"));
 
@@ -578,6 +579,36 @@ juce::String PresetPanel::favouriteKey (const PresetEntry& e) const
 
 const PresetEntry* PresetPanel::openEntry() const { return findEntry (currentKey); }
 
+void PresetPanel::adoptOpenDocument()
+{
+    // A remembered file that has gone since is nothing open, which is what makes Save a Save As.
+    const auto key = host.openDocumentKey();
+    if (key.startsWith ("builtin:"))
+    {
+        currentFile = juce::File();
+        currentKey = key;
+    }
+    else if (juce::File::isAbsolutePath (key) && juce::File (key).existsAsFile())
+    {
+        currentFile = juce::File (key);
+        currentKey = key;
+    }
+    else
+    {
+        setOpen ({}, {});
+    }
+
+    list.relayout();   // the OPEN badge
+    refreshLiveStrip();
+}
+
+void PresetPanel::setOpen (const juce::File& file, const juce::String& key)
+{
+    currentFile = file;
+    currentKey = key;
+    host.openDocumentKeyChanged (key);
+}
+
 // ── list model ──────────────────────────────────────────────────────────────
 
 const PresetEntry* PresetPanel::getRow (int row)
@@ -688,8 +719,7 @@ void PresetPanel::deleteNow (PresetEntry entry)
         // Its on-disk identity is gone, but the live patch is not: it keeps the name, so the
         // strip still says what it is and the next save writes it back.
         pendingLiveMeta = liveBefore;
-        currentFile = juce::File();
-        currentKey = {};
+        setOpen ({}, {});
     }
     if (editKey == entry.key()) closeEditor();
     if (favourites.contains (favourite))
@@ -940,8 +970,7 @@ void PresetPanel::loadEntry (const PresetEntry& entryIn)
     host.applyDocument (loaded->tree);
     // A built-in has no file to write back to, so the open document has no on-disk identity and
     // Save writes a new file -- which is exactly what editing a built-in should do.
-    currentFile = entry.file;
-    currentKey = entry.key();
+    setOpen (entry.file, entry.key());
     pendingLiveMeta = loaded->meta;
     host.documentLoaded (entry.file, loaded->meta);
 
@@ -982,8 +1011,7 @@ bool PresetPanel::writeLiveTo (const juce::File& file, PresetMetadata meta)
     saved.name = file.getFileNameWithoutExtension();   // the file had the last word
     host.documentSaved (file, saved);
 
-    currentFile = file;
-    currentKey = file.getFullPathName();
+    setOpen (file, file.getFullPathName());
     pendingLiveMeta = saved;
     rescanAndRefreshList();
     setStatus ("saved " + quoted (saved.name));
@@ -1071,8 +1099,7 @@ void PresetPanel::newNow()
     stopAuditionIfRunning();
     host.newDocument();
 
-    currentFile = juce::File();
-    currentKey = {};
+    setOpen ({}, {});
     pendingLiveMeta = {};
 
     if (editTarget == EditTarget::live || editTarget == EditTarget::saveAs) closeEditor();
@@ -1267,8 +1294,7 @@ void PresetPanel::applyToEntry (PresetEntry entry, PresetMetadata draft)
     // next plain save would write the old name straight back over the rename.
     if (wasOpen)
     {
-        currentFile = entry.file;
-        currentKey = entry.key();
+        setOpen (entry.file, entry.key());
         pendingLiveMeta = entry.meta;
         host.documentSaved (entry.file, entry.meta);
     }
@@ -1396,8 +1422,7 @@ void PresetPanel::runMigrate (const juce::File& dest)
     {
         if (result.movedFrom[i] == currentFile)
         {
-            currentFile = result.moved[i];
-            currentKey = currentFile.getFullPathName();
+            setOpen (result.moved[i], result.moved[i].getFullPathName());
         }
         if (result.movedFrom[i].getFullPathName() == selectedKey)
             selectedKey = result.moved[i].getFullPathName();

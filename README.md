@@ -91,6 +91,14 @@ dirtiness by comparing trees, and it polls the flag a few times a second, so the
 a cheap read, not a computation). Implement it as soon as the plugin can say, truthfully, whether
 the live document differs from its file.
 
+`openDocumentKey()` / `openDocumentKeyChanged()` let the plugin keep which preset is open. The
+panel tells the host the open preset's `PresetEntry::key()` every time it changes, and adopts
+whatever the host answers when it is constructed. A plugin's editor -- and the panel in it -- is
+destroyed every time the host closes the window, so without these a reopened window has nothing
+open and Save turns into Save As. Keep the key on the processor and in its saved state, and a
+reopened project knows too. A plugin that opens presets without the panel (a stepper of its own)
+sets the key itself and calls `PresetPanel::adoptOpenDocument()`. The defaults keep nothing.
+
 `PresetHost::migratePresetFolder (dest, format)` also has a working default: it moves every preset
 file with `PresetFile::moveAllPresets` and adopts `dest` only if every file moved. Most adapters
 never need to touch it. Override it when the plugin keeps something else in its preset folder that
